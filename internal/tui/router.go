@@ -25,12 +25,14 @@ const (
 // propagates.
 type Model struct {
 	active   view
-	repoList screen.Model
-	current  screen.Model
-	err      error
+	repoList screen.Model // persistent: survives back-navigation so the cursor is retained
+	current  screen.Model // active per-repo screen (pr now; pr/issue/action in #2), rebuilt on each selection
+	err      error        // sticky: once set, the overlay shows until quit
 	width    int
 	height   int
 }
+
+var _ tea.Model = Model{}
 
 // NewModel returns the root model with the repository-selection screen active.
 func NewModel() Model {
@@ -58,6 +60,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.active = viewRepoList
 				return m, nil
 			}
+			// already at the repo list: fall through to forward (repolist ignores esc/backspace)
 		}
 		return m.forward(msg)
 

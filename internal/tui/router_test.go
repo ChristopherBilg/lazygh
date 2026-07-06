@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -41,8 +42,8 @@ func TestEscReturnsToRepoList(t *testing.T) {
 func TestErrMsgSetsError(t *testing.T) {
 	m := NewModel()
 	updated, _ := m.Update(screen.ErrMsg{Err: errors.New("boom")})
-	if updated.(Model).err == nil {
-		t.Fatal("expected err to be set after ErrMsg")
+	if err := updated.(Model).err; err == nil || err.Error() != "boom" {
+		t.Fatalf("expected err \"boom\", got %v", err)
 	}
 }
 
@@ -63,5 +64,65 @@ func TestQuitOnQ(t *testing.T) {
 	}
 	if _, ok := cmd().(tea.QuitMsg); !ok {
 		t.Fatal("expected command to be tea.Quit")
+	}
+}
+
+func TestForwardRoutesNonGlobalKeyToRepoList(t *testing.T) {
+	m := NewModel()
+	// A non-global key (not q/ctrl+c/esc/backspace) must be forwarded to the
+	// active screen via forward(); the router itself must not change views.
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if updated.(Model).active != viewRepoList {
+		t.Fatal("expected to stay on repo list after a non-global key")
+	}
+}
+
+func TestForwardRoutesToActivePRScreen(t *testing.T) {
+	m := NewModel()
+	selected, _ := m.Update(repolist.RepoSelectedMsg{Owner: "o", Name: "n"})
+	// A non-global key while in PR view is forwarded to the PR screen; the
+	// router stays in PR view.
+	updated, _ := selected.(Model).Update(tea.KeyMsg{Type: tea.KeyTab})
+	if updated.(Model).active != viewPR {
+		t.Fatal("expected to stay in PR view after forwarding a non-global key")
+	}
+}
+
+func TestViewShowsErrorOverlay(t *testing.T) {
+	m := NewModel()
+	errored, _ := m.Update(screen.ErrMsg{Err: errors.New("boom")})
+	if view := errored.(Model).View(); !strings.Contains(view, "Error: boom") {
+		t.Fatalf("expected error overlay, got %q", view)
+	}
+}
+
+func TestViewDelegatesToRepoList(t *testing.T) {
+	m := NewModel()
+	// No error, repo list active: View delegates to the repo-list screen,
+	// which shows its loading text initially.
+	if view := m.View(); !strings.Contains(view, "Fetching your repositories") {
+		t.Fatalf("expected repo-list view, got %q", view)
+	}
+}
+
+func TestViewDelegatesToPRScreen(t *testing.T) {
+	m := NewModel()
+	selected, _ := m.Update(repolist.RepoSelectedMsg{Owner: "o", Name: "hello"})
+	// PR view active, no error: View delegates to the PR screen (loading text).
+	if view := selected.(Model).View(); !strings.Contains(view, "Fetching PRs for hello") {
+		t.Fatalf("expected PR screen view, got %q", view)
+	}
+}
+
+func TestResizeAfterSelectionReachesPRScreen(t *testing.T) {
+	m := NewModel()
+	selected, _ := m.Update(repolist.RepoSelectedMsg{Owner: "o", Name: "n"})
+	resized, _ := selected.(Model).Update(tea.WindowSizeMsg{Width: 120, Height: 50})
+	rm := resized.(Model)
+	if rm.width != 120 || rm.height != 50 {
+		t.Fatalf("dimensions = %dx%d, want 120x50", rm.width, rm.height)
+	}
+	if rm.current == nil {
+		t.Fatal("expected current PR screen to remain set after resize")
 	}
 }
