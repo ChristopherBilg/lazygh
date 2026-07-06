@@ -3,6 +3,7 @@ package repolist
 
 import (
 	"fmt"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -90,7 +91,8 @@ func (m Model) View() string {
 		return "\n  Fetching your repositories...\n"
 	}
 
-	s := " Select a Repository:\n\n"
+	var s strings.Builder
+	s.WriteString(" Select a Repository:\n\n")
 
 	start := 0
 	end := len(m.repos)
@@ -106,14 +108,14 @@ func (m Model) View() string {
 			cursor = "> "
 			repoName = styles.SelectedItem.Render(repoName)
 		}
-		s += fmt.Sprintf("%s%s\n", cursor, repoName)
+		s.WriteString(fmt.Sprintf("%s%s\n", cursor, repoName))
 	}
 
 	if len(m.repos) > maxVisible {
-		s += fmt.Sprintf("\n  ...and %d more.\n", len(m.repos)-maxVisible)
+		s.WriteString(fmt.Sprintf("\n  ...and %d more.\n", len(m.repos)-maxVisible))
 	}
 
-	box := styles.Menu.Width(m.width / 2).Render(s)
+	box := styles.Menu.Width(m.width / 2).Render(s.String())
 	centeredBox := lipgloss.PlaceHorizontal(m.width, lipgloss.Center, box)
 
 	footer := " [j/k] Navigate  •  [enter] Select  •  [q] Quit"

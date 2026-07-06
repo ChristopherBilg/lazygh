@@ -3,6 +3,7 @@ package pr
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -206,7 +207,7 @@ func (m Model) View() string {
 	leftPaneWidth := (m.width * 3) / 10
 	paneHeight := m.height - 6
 
-	listStr := ""
+	var listStr strings.Builder
 	for i, pr := range m.ctx.PRs {
 		cursorStr := "  "
 		title := fmt.Sprintf("#%d %s", pr.Number, pr.Title)
@@ -219,7 +220,7 @@ func (m Model) View() string {
 			cursorStr = "> "
 			title = styles.SelectedItem.Render(title)
 		}
-		listStr += fmt.Sprintf("%s%s\n", cursorStr, title)
+		listStr.WriteString(fmt.Sprintf("%s%s\n", cursorStr, title))
 	}
 
 	var listBorder, detailBorder lipgloss.Style
@@ -231,7 +232,7 @@ func (m Model) View() string {
 		detailBorder = styles.Active
 	}
 
-	left := listBorder.Width(leftPaneWidth).Height(paneHeight).Render(listStr)
+	left := listBorder.Width(leftPaneWidth).Height(paneHeight).Render(listStr.String())
 	right := detailBorder.Width(m.viewport.Width + 2).Height(paneHeight).Render(m.viewport.View())
 
 	header := fmt.Sprintf(" Lazy GitHub | %s/%s \n\n", m.ctx.Owner, m.ctx.Name)
