@@ -121,7 +121,7 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 					m.viewport.GotoTop()
 				}
 			} else {
-				m.viewport.LineUp(1)
+				m.viewport.ScrollUp(1)
 			}
 		case "down", "j":
 			if m.focus == focusList {
@@ -131,7 +131,7 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 					m.viewport.GotoTop()
 				}
 			} else {
-				m.viewport.LineDown(1)
+				m.viewport.ScrollDown(1)
 			}
 		case "c":
 			if len(m.ctx.PRs) > 0 {
@@ -220,7 +220,7 @@ func (m Model) View() string {
 			cursorStr = "> "
 			title = styles.SelectedItem.Render(title)
 		}
-		listStr.WriteString(fmt.Sprintf("%s%s\n", cursorStr, title))
+		fmt.Fprintf(&listStr, "%s%s\n", cursorStr, title)
 	}
 
 	var listBorder, detailBorder lipgloss.Style

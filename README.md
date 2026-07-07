@@ -2,6 +2,30 @@
 
 This document outlines the epics and work items required to build `lazygh` into a production-grade, extensible terminal UI application.
 
+## Epic 0: Repository Foundations & Project Hygiene
+Before writing feature code, establish the baseline scaffolding, quality gates, and contributor-facing files that every production repository needs.
+
+* **Continuous Integration Quality Gate:**
+    * Add a GitHub Actions workflow (`.github/workflows/ci.yml`) triggered on every pull request and push to `main`.
+    * Run `go build ./...`, `go test ./...`, `go vet ./...`, and `golangci-lint run` as required status checks.
+    * Cache Go modules to keep runs fast; pin action versions (SHA) for reproducibility.
+    * Enforce `gofmt`/`goimports` formatting so style is verified automatically.
+* **Community Health & Governance Files:**
+    * Add an OSI-approved `LICENSE` (MIT) so usage terms are unambiguous.
+    * Write `CONTRIBUTING.md` covering local setup, branch/PR conventions, and how to run tests and lint locally.
+    * Add `CODE_OF_CONDUCT.md` (Contributor Covenant) to set community expectations.
+    * Add `SECURITY.md` describing supported versions and the private vulnerability-disclosure process.
+* **GitHub Templates & Review Routing:**
+    * Add issue templates under `.github/ISSUE_TEMPLATE/` for bug reports and feature requests, plus a `config.yml` to route questions elsewhere.
+    * Add `.github/PULL_REQUEST_TEMPLATE.md` with a checklist (tests pass, lint clean, docs updated).
+    * Add `.github/CODEOWNERS` so reviews are auto-requested from the right owners.
+* **Developer Tooling & Repo Hygiene:**
+    * Add a Go `.gitignore` (compiled binaries, build output, editor/OS cruft, local `.local/state/lazygh` logs).
+    * Add `.editorconfig` to standardize indentation and line endings across editors.
+    * Add `.golangci.yml` pinning the linter set and rules that CI enforces.
+    * Add a `Makefile` exposing common targets: `build`, `test`, `lint`, `run`, `fmt`.
+    * Extend Dependabot (already covering Go modules via `.github/dependabot.yml`) to also update GitHub Actions and group minor/patch bumps.
+
 ## Epic 1: Architectural Foundations & State Management
 Before adding new GitHub features, the core application skeleton must be refactored to support multiple contexts (PRs, Issues, Actions) without blocking the UI.
 
@@ -66,5 +90,5 @@ Getting the tool out of your local environment and into the hands of other engin
     * Write table-driven unit tests for the Bubble Tea `Update` functions (testing state changes based on simulated `tea.KeyMsg` inputs).
     * Mock the `go-gh` API responses to test UI rendering without hitting live endpoints.
 * **Automated Release Pipeline:**
-    * Set up GitHub Actions to run `go test` and `golangci-lint` on every push.
+    * Reuse the CI quality gate from Epic 0 as a required check, then trigger the release workflow on version tags (`v*`).
     * Integrate `goreleaser` to automatically compile binaries for macOS, Linux, and Windows, generate a GitHub Release, and publish to a Homebrew tap on git tags.
