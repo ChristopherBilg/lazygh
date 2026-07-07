@@ -4,34 +4,34 @@
     {
       "id": 1,
       "subject": "Task 1: Dev tooling & hygiene (.gitignore, .editorconfig, Makefile)",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Repo gains a Go .gitignore, .editorconfig, and a Makefile whose build/vet/test targets work.\n\n**Files:** Create `.gitignore`, `.editorconfig`, `Makefile` (recipes tab-indented).\n\n**Verify:** `make build && make vet && make test`; `git check-ignore bin/lazygh`. See plan Task 1 for exact contents.\n\n```json:metadata\n{\"files\": [\".gitignore\", \".editorconfig\", \"Makefile\"], \"verifyCommand\": \"make build && make vet && make test && git check-ignore bin/lazygh\", \"acceptanceCriteria\": [\"three files exist\", \"make build/vet/test succeed\", \"bin/ git-ignored\"]}\n```"
     },
     {
       "id": 2,
       "subject": "Task 2: Lint gate — .golangci.yml + 5 staticcheck fixes",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Add golangci-lint v2 gate and make existing code pass (0 issues), tests green.\n\n**Files:** Create `.golangci.yml`; modify `internal/tui/pr/pr.go` (LineUp->ScrollUp @124, LineDown->ScrollDown @134, WriteString+Sprintf->Fprintf @223); modify `internal/tui/repolist/repolist.go` (Fprintf @111,@115).\n\n**Verify:** install golangci-lint v2.12.2; `golangci-lint run` -> 0 issues; `go test ./...` ok. Fixes pre-verified during planning. See plan Task 2.\n\n```json:metadata\n{\"files\": [\".golangci.yml\", \"internal/tui/pr/pr.go\", \"internal/tui/repolist/repolist.go\"], \"verifyCommand\": \"export PATH=\\\"$(go env GOPATH)/bin:$PATH\\\"; golangci-lint run && go test ./...\", \"acceptanceCriteria\": [\"golangci-lint run 0 issues\", \"go test passes\", \"v2 schema config\"]}\n```"
     },
     {
       "id": 3,
       "subject": "Task 3: CI workflow + Dependabot extension",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [1, 2],
       "description": "**Goal:** Add .github/workflows/ci.yml (test + lint jobs, SHA-pinned actions) and extend Dependabot to github-actions + grouping.\n\n**Files:** Create `.github/workflows/ci.yml`; modify `.github/dependabot.yml`.\n\n**Verify:** `actionlint`; `make build && make vet && make test && golangci-lint run`. Blocked by Tasks 1 (Makefile) and 2 (green lint). Pinned SHAs: checkout v7.0.0 9c091bb..., setup-go v6.5.0 924ae3a..., golangci-lint-action v9.3.0 ba0d7d2.... See plan Task 3.\n\n```json:metadata\n{\"files\": [\".github/workflows/ci.yml\", \".github/dependabot.yml\"], \"verifyCommand\": \"export PATH=\\\"$(go env GOPATH)/bin:$PATH\\\"; actionlint && make build && make vet && make test && golangci-lint run\", \"acceptanceCriteria\": [\"ci.yml test+lint jobs, correct triggers\", \"actions SHA-pinned\", \"dependabot 2 ecosystems + groups\", \"actionlint clean\"]}\n```"
     },
     {
       "id": 4,
       "subject": "Task 4: Community-health files",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Add LICENSE, CONTRIBUTING, CODE_OF_CONDUCT, SECURITY — all reporting via GitHub, no email.\n\n**Files:** Create `LICENSE` (MIT, 2026 Christopher R. Bilger), `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md` (Contributor Covenant v2.1; contact = maintainer via GitHub), `SECURITY.md` (GitHub Private Vulnerability Reporting).\n\n**Verify:** email-regex grep over the 4 files returns nothing. CoC fetched from contributor-covenant.org v2.1 with contact substitution. See plan Task 4.\n\n```json:metadata\n{\"files\": [\"LICENSE\", \"CONTRIBUTING.md\", \"CODE_OF_CONDUCT.md\", \"SECURITY.md\"], \"verifyCommand\": \"grep -rIE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\\\.[A-Za-z]{2,}' LICENSE CONTRIBUTING.md CODE_OF_CONDUCT.md SECURITY.md; test $? -eq 1\", \"acceptanceCriteria\": [\"MIT license 2026 Christopher R. Bilger\", \"no email anywhere\", \"SECURITY=GitHub PVR, CoC=GitHub contact\"]}\n```"
     },
     {
       "id": 5,
       "subject": "Task 5: GitHub templates & review routing",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** Add issue templates (bug+feature), config.yml (blank issues disabled), PR template, CODEOWNERS.\n\n**Files:** Create `.github/ISSUE_TEMPLATE/bug_report.md`, `.github/ISSUE_TEMPLATE/feature_request.md`, `.github/ISSUE_TEMPLATE/config.yml`, `.github/PULL_REQUEST_TEMPLATE.md`, `.github/CODEOWNERS`.\n\n**Verify:** config.yml valid YAML; `grep -q '^\\* @ChristopherBilg$' .github/CODEOWNERS`. See plan Task 5.\n\n```json:metadata\n{\"files\": [\".github/ISSUE_TEMPLATE/bug_report.md\", \".github/ISSUE_TEMPLATE/feature_request.md\", \".github/ISSUE_TEMPLATE/config.yml\", \".github/PULL_REQUEST_TEMPLATE.md\", \".github/CODEOWNERS\"], \"verifyCommand\": \"grep -q '^\\\\* @ChristopherBilg$' .github/CODEOWNERS && echo OK\", \"acceptanceCriteria\": [\"issue templates + config.yml blank disabled\", \"PR template with checklist\", \"CODEOWNERS assigns @ChristopherBilg\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-07-07T03:26:55Z"
+  "lastUpdated": "2026-07-07T18:01:13Z"
 }
