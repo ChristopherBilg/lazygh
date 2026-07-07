@@ -1,0 +1,23 @@
+# Binaries / build output
+/bin/
+/lazygh
+*.exe
+*.test
+*.out
+
+# Coverage
+*.cover
+coverage.*
+
+# Go workspace
+go.work
+go.work.sum
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Local application state / logs (see Epic 1 logging)
+.local/
