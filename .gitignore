@@ -21,3 +21,6 @@ go.work.sum
 
 # Local application state / logs (see Epic 1 logging)
 .local/
+
+# Superpowers working docs (from main; already-committed specs/plans remain tracked)
+docs/superpowers
