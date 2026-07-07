@@ -82,7 +82,7 @@ Before writing feature code, establish the baseline scaffolding, quality gates, 
     * Add `.editorconfig` to standardize indentation and line endings across editors.
     * Add `.golangci.yml` pinning the linter set and rules that CI enforces.
     * Add a `Makefile` exposing common targets: `build`, `test`, `lint`, `run`, `fmt`.
-    * (Dependabot is already configured via `.github/dependabot.yml`.)
+    * Extend Dependabot (already covering Go modules via `.github/dependabot.yml`) to also update GitHub Actions and group minor/patch bumps.
 
 ## Epic 1: Architectural Foundations & State Management
 ```
