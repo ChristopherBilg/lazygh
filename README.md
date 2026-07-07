@@ -12,7 +12,7 @@ Before writing feature code, establish the baseline scaffolding, quality gates, 
     * Enforce `gofmt`/`goimports` formatting so style is verified automatically.
 * **Community Health & Governance Files:**
     * Add an OSI-approved `LICENSE` (MIT) so usage terms are unambiguous.
-    * Write `CONTRIBUTING.md` covering local setup, branch/PR conventions, and how to run tests + lint locally.
+    * Write `CONTRIBUTING.md` covering local setup, branch/PR conventions, and how to run tests and lint locally.
     * Add `CODE_OF_CONDUCT.md` (Contributor Covenant) to set community expectations.
     * Add `SECURITY.md` describing supported versions and the private vulnerability-disclosure process.
 * **GitHub Templates & Review Routing:**
