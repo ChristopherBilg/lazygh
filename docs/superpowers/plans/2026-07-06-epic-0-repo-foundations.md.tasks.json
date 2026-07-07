@@ -1,0 +1,12 @@
+{
+  "planPath": "docs/superpowers/plans/2026-07-06-epic-0-repo-foundations.md",
+  "tasks": [
+    {
+      "id": 1,
+      "subject": "Task 1: Add Epic 0 & de-duplicate Epic 5 in README",
+      "status": "pending",
+      "description": "**Goal:** README.md gains an 'Epic 0: Repository Foundations & Project Hygiene' section before Epic 1, and Epic 5's first Automated Release Pipeline bullet no longer duplicates the CI quality gate.\n\n**Files:**\n- Modify: `README.md` (insert before `## Epic 1:` heading; edit first bullet under Epic 5's 'Automated Release Pipeline')\n\n**Acceptance Criteria:**\n- Epic 0 exists before Epic 1\n- Four Epic 0 sub-groups: CI Quality Gate, Community Health & Governance Files, GitHub Templates & Review Routing, Developer Tooling & Repo Hygiene\n- LICENSE bullet names MIT\n- Epic 5's 'on every push' bullet replaced by the Epic-0-reuse bullet\n- Intro and Epics 1-5 otherwise unchanged\n\n**Steps:**\n1. Insert the full Epic 0 block immediately before the `## Epic 1:` heading (exact content in plan).\n2. Reword Epic 5's first bullet to reuse Epic 0's CI gate and trigger release on `v*` tags.\n3. Run grep verification checks + visual read.\n4. Commit README.md.\n\n```json:metadata\n{\"files\": [\"README.md\"], \"verifyCommand\": \"grep -n '^## Epic' README.md; grep -c 'on every push' README.md; grep -c 'Reuse the CI quality gate from Epic 0' README.md\", \"acceptanceCriteria\": [\"Epic 0 exists before Epic 1\", \"four Epic 0 sub-groups present\", \"LICENSE names MIT\", \"Epic 5 CI bullet reworded\", \"intro and Epics 1-5 otherwise unchanged\"]}\n```"
+    }
+  ],
+  "lastUpdated": "2026-07-06T00:00:00Z"
+}
