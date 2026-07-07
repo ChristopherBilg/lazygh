@@ -108,11 +108,11 @@ func (m Model) View() string {
 			cursor = "> "
 			repoName = styles.SelectedItem.Render(repoName)
 		}
-		s.WriteString(fmt.Sprintf("%s%s\n", cursor, repoName))
+		fmt.Fprintf(&s, "%s%s\n", cursor, repoName)
 	}
 
 	if len(m.repos) > maxVisible {
-		s.WriteString(fmt.Sprintf("\n  ...and %d more.\n", len(m.repos)-maxVisible))
+		fmt.Fprintf(&s, "\n  ...and %d more.\n", len(m.repos)-maxVisible)
 	}
 
 	box := styles.Menu.Width(m.width / 2).Render(s.String())
