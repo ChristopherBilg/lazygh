@@ -16,9 +16,9 @@ func TestBarContainsAllTabLabels(t *testing.T) {
 
 func TestBarShowsNumberHints(t *testing.T) {
 	bar := Bar(TabPRs)
-	for _, hint := range []string{"1", "2", "3"} {
-		if !strings.Contains(bar, hint) {
-			t.Fatalf("bar %q missing number hint %q", bar, hint)
+	for _, want := range []string{"1 Pull Requests", "2 Issues", "3 Actions"} {
+		if !strings.Contains(bar, want) {
+			t.Fatalf("bar %q missing hint+label %q", bar, want)
 		}
 	}
 }
