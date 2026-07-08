@@ -18,8 +18,8 @@ func TestRepoSelectedSwitchesToPRView(t *testing.T) {
 	if rm.active != viewPR {
 		t.Fatal("expected active view to be viewPR after RepoSelectedMsg")
 	}
-	if rm.current == nil {
-		t.Fatal("expected current screen to be set")
+	if rm.perRepo[viewPR] == nil {
+		t.Fatal("expected the PR screen to be built after RepoSelectedMsg")
 	}
 	if cmd == nil {
 		t.Fatal("expected an init command (PR fetch) after selection")
@@ -122,7 +122,62 @@ func TestResizeAfterSelectionReachesPRScreen(t *testing.T) {
 	if rm.width != 120 || rm.height != 50 {
 		t.Fatalf("dimensions = %dx%d, want 120x50", rm.width, rm.height)
 	}
-	if rm.current == nil {
-		t.Fatal("expected current PR screen to remain set after resize")
+	if rm.perRepo[viewPR] == nil {
+		t.Fatal("expected the PR screen to remain built after resize")
+	}
+}
+
+func TestNumberKeysSwitchViewsAfterSelection(t *testing.T) {
+	m := NewModel()
+	sel, _ := m.Update(repolist.RepoSelectedMsg{Owner: "o", Name: "n"})
+	cur := sel.(Model)
+
+	tests := []struct {
+		key  rune
+		want view
+	}{
+		{'2', viewIssues},
+		{'3', viewActions},
+		{'1', viewPR},
+	}
+	for _, tt := range tests {
+		updated, _ := cur.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tt.key}})
+		cur = updated.(Model)
+		if cur.active != tt.want {
+			t.Fatalf("after key %q, active = %d, want %d", tt.key, cur.active, tt.want)
+		}
+	}
+}
+
+func TestNumberKeysIgnoredOnRepoList(t *testing.T) {
+	m := NewModel()
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	if updated.(Model).active != viewRepoList {
+		t.Fatal("expected number keys to be ignored on the repo list")
+	}
+}
+
+func TestSwitchingViewsDoesNotReinit(t *testing.T) {
+	m := NewModel()
+	sel, cmd := m.Update(repolist.RepoSelectedMsg{Owner: "o", Name: "n"})
+	if cmd == nil {
+		t.Fatal("expected an Init command when the per-repo screens are built")
+	}
+	// Switching to an already-built view must not re-init it (that is what
+	// preserves its selection/scroll state).
+	_, cmd = sel.(Model).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	if cmd != nil {
+		t.Fatal("expected no Init command when switching between held views")
+	}
+}
+
+func TestAllPerRepoScreensBuiltOnSelection(t *testing.T) {
+	m := NewModel()
+	sel, _ := m.Update(repolist.RepoSelectedMsg{Owner: "o", Name: "n"})
+	rm := sel.(Model)
+	for _, v := range perRepoViews {
+		if rm.perRepo[v] == nil {
+			t.Fatalf("expected per-repo screen for view %d to be built", v)
+		}
 	}
 }

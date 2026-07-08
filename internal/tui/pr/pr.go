@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	ghClient "github.com/ChristopherBilg/lazygh/internal/github"
+	"github.com/ChristopherBilg/lazygh/internal/tui/nav"
 	"github.com/ChristopherBilg/lazygh/internal/tui/screen"
 	"github.com/ChristopherBilg/lazygh/internal/tui/styles"
 )
@@ -161,7 +162,7 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 }
 
 func (m *Model) resizeViewport() {
-	headerHeight := 4
+	headerHeight := 5 // +1 for the nav.Bar line above the repo header
 	footerHeight := 2
 	contentHeight := m.height - headerHeight - footerHeight
 	rightPaneWidth := (m.width * 7) / 10
@@ -201,11 +202,11 @@ func (m *Model) updateViewportContent() {
 // View renders the split pane, or a loading message while PRs are fetched.
 func (m Model) View() string {
 	if m.loading {
-		return fmt.Sprintf("\n  Fetching PRs for %s...\n", m.ctx.Name)
+		return fmt.Sprintf("%s\n\n  Fetching PRs for %s...\n", nav.Bar(nav.TabPRs), m.ctx.Name)
 	}
 
 	leftPaneWidth := (m.width * 3) / 10
-	paneHeight := m.height - 6
+	paneHeight := m.height - 7
 
 	var listStr strings.Builder
 	for i, pr := range m.ctx.PRs {
@@ -235,10 +236,10 @@ func (m Model) View() string {
 	left := listBorder.Width(leftPaneWidth).Height(paneHeight).Render(listStr.String())
 	right := detailBorder.Width(m.viewport.Width + 2).Height(paneHeight).Render(m.viewport.View())
 
-	header := fmt.Sprintf(" Lazy GitHub | %s/%s \n\n", m.ctx.Owner, m.ctx.Name)
+	header := fmt.Sprintf("%s\n Lazy GitHub | %s/%s \n\n", nav.Bar(nav.TabPRs), m.ctx.Owner, m.ctx.Name)
 	ui := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 
-	footerText := " [esc] Change Repo  •  [tab] Focus  •  [j/k] Scroll  •  [c] Checkout  •  [o] Web  •  [q] Quit"
+	footerText := " [1/2/3] Views  •  [esc] Repo  •  [tab] Focus  •  [j/k] Scroll  •  [c] Checkout  •  [o] Web  •  [q] Quit"
 	if m.message != "" {
 		footerText = fmt.Sprintf(" %s | %s", styles.Title.Render(m.message), footerText)
 	}
