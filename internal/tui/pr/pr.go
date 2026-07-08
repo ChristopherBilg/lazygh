@@ -21,6 +21,9 @@ const (
 	focusDetails
 )
 
+// refreshingMsg is the transient footer status shown while a manual refresh runs.
+const refreshingMsg = "Refreshing..."
+
 // Model is the pull-request split-pane screen.
 type Model struct {
 	ctx      ghClient.RepoContext
@@ -148,14 +151,14 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 			}
 		case "r":
 			// Manual refresh: bypass the cache, keep the current PRs visible.
-			m.message = "Refreshing..."
+			m.message = refreshingMsg
 			cmds = append(cmds, fetchPRsCmd(m.ctx.Owner, m.ctx.Name, true))
 		}
 
 	case prDataMsg:
 		m.ctx = ghClient.RepoContext(msg)
 		m.loading = false
-		if m.message == "Refreshing..." {
+		if m.message == refreshingMsg {
 			m.message = ""
 		}
 		if m.cursor >= len(m.ctx.PRs) {

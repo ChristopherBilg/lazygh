@@ -16,6 +16,11 @@ type entry struct {
 // The zero value is not usable; call NewCache. Each key is namespaced per
 // resource type, so every key maps to a single value type and getOrLoad's type
 // assertion is safe.
+//
+// Invalidation policy: entries live for the process lifetime and never expire on
+// their own. A forced load (getOrLoad's force parameter, reached through the
+// TUI's manual "r" refresh) is the only way to replace an entry. There is no TTL
+// yet: storedAt is recorded for a future TTL but is currently unread.
 type Cache struct {
 	mu      sync.Mutex
 	entries map[string]entry
