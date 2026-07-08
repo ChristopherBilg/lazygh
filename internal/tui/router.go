@@ -7,6 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/ChristopherBilg/lazygh/internal/tui/action"
+	"github.com/ChristopherBilg/lazygh/internal/tui/issue"
 	"github.com/ChristopherBilg/lazygh/internal/tui/pr"
 	"github.com/ChristopherBilg/lazygh/internal/tui/repolist"
 	"github.com/ChristopherBilg/lazygh/internal/tui/screen"
@@ -18,16 +20,23 @@ type view int
 const (
 	viewRepoList view = iota
 	viewPR
+	viewIssues
+	viewActions
 )
 
+// perRepoViews lists the per-repo views in tab order (1/2/3). It drives
+// construction, Init, and resize so the behavior is deterministic.
+var perRepoViews = []view{viewPR, viewIssues, viewActions}
+
 // Model is the root router. It owns only routing state: the active view, the
-// child screens, the sticky global error, and the window dimensions it
-// propagates.
+// repository-selection screen, the per-repo screens (kept alive so switching
+// between them preserves each one's selection and scroll position), the sticky
+// global error, and the window dimensions it propagates.
 type Model struct {
 	active   view
-	repoList screen.Model // persistent: survives back-navigation so the cursor is retained
-	current  screen.Model // active per-repo screen (pr now; pr/issue/action in #2), rebuilt on each selection
-	err      error        // sticky: once set, the overlay shows until quit
+	repoList screen.Model          // persistent: survives back-navigation so the cursor is retained
+	perRepo  map[view]screen.Model // per-repo screens (pr/issue/action), built on selection, kept alive
+	err      error                 // sticky: once set, the overlay shows until quit
 	width    int
 	height   int
 }
@@ -61,6 +70,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			// already at the repo list: fall through to forward (repolist ignores esc/backspace)
+		case "1", "2", "3":
+			// Global view switch. Only meaningful once a repo is selected; on the
+			// repo list these keys are ignored (forwarded, repolist drops them).
+			if m.active != viewRepoList {
+				switch msg.String() {
+				case "1":
+					m.active = viewPR
+				case "2":
+					m.active = viewIssues
+				case "3":
+					m.active = viewActions
+				}
+				return m, nil
+			}
 		}
 		return m.forward(msg)
 
@@ -70,9 +93,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.broadcastResize(msg)
 
 	case repolist.RepoSelectedMsg:
-		m.current = pr.New(msg.Owner, msg.Name, m.width, m.height)
+		m.perRepo = map[view]screen.Model{
+			viewPR:      pr.New(msg.Owner, msg.Name, m.width, m.height),
+			viewIssues:  issue.New(m.width, m.height),
+			viewActions: action.New(m.width, m.height),
+		}
 		m.active = viewPR
-		return m, m.current.Init()
+
+		var cmds []tea.Cmd
+		for _, v := range perRepoViews {
+			cmds = append(cmds, m.perRepo[v].Init())
+		}
+		return m, tea.Batch(cmds...)
 
 	case screen.ErrMsg:
 		m.err = msg.Err
@@ -85,11 +117,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // forward sends a message to the active screen and stores the returned model.
 func (m Model) forward(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
-	switch m.active {
-	case viewRepoList:
+	if m.active == viewRepoList {
 		m.repoList, cmd = m.repoList.Update(msg)
-	default:
-		m.current, cmd = m.current.Update(msg)
+		return m, cmd
+	}
+	if s, ok := m.perRepo[m.active]; ok {
+		m.perRepo[m.active], cmd = s.Update(msg)
 	}
 	return m, cmd
 }
@@ -105,9 +138,11 @@ func (m Model) broadcastResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	m.repoList, cmd = m.repoList.Update(msg)
 	cmds = append(cmds, cmd)
 
-	if m.current != nil {
-		m.current, cmd = m.current.Update(msg)
-		cmds = append(cmds, cmd)
+	for _, v := range perRepoViews {
+		if s, ok := m.perRepo[v]; ok {
+			m.perRepo[v], cmd = s.Update(msg)
+			cmds = append(cmds, cmd)
+		}
 	}
 
 	return m, tea.Batch(cmds...)
@@ -119,10 +154,11 @@ func (m Model) View() string {
 		return fmt.Sprintf("\n  Error: %v\n\n  Press 'q' to quit.\n", m.err)
 	}
 
-	switch m.active {
-	case viewRepoList:
+	if m.active == viewRepoList {
 		return m.repoList.View()
-	default:
-		return m.current.View()
 	}
+	if s, ok := m.perRepo[m.active]; ok {
+		return s.View()
+	}
+	return ""
 }
