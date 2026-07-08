@@ -1,6 +1,7 @@
 package pr
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -108,5 +109,31 @@ func TestPRDataMsgPopulates(t *testing.T) {
 	}
 	if len(um.ctx.PRs) != 2 {
 		t.Fatalf("expected 2 PRs, got %d", len(um.ctx.PRs))
+	}
+}
+
+func TestViewRendersTabBar(t *testing.T) {
+	m := withPRs(1)
+	v := m.View()
+	for _, label := range []string{"Pull Requests", "Issues", "Actions"} {
+		if !strings.Contains(v, label) {
+			t.Fatalf("PR view missing tab label %q", label)
+		}
+	}
+	if !strings.Contains(v, "[1/2/3] Views") {
+		t.Fatalf("PR footer missing views hint:\n%s", v)
+	}
+}
+
+func TestLoadingViewRendersTabBar(t *testing.T) {
+	m := New("octocat", "hello", 100, 40) // loading == true
+	v := m.View()
+	for _, label := range []string{"Pull Requests", "Issues", "Actions"} {
+		if !strings.Contains(v, label) {
+			t.Fatalf("loading PR view missing tab label %q:\n%s", label, v)
+		}
+	}
+	if !strings.Contains(v, "Fetching PRs for hello") {
+		t.Fatalf("loading view lost its fetch message:\n%s", v)
 	}
 }
