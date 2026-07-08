@@ -24,8 +24,10 @@ const (
 	viewActions
 )
 
-// perRepoViews lists the per-repo views in tab order (1/2/3). It drives
-// construction, Init, and resize so the behavior is deterministic.
+// perRepoViews lists the per-repo views in tab order (1/2/3). It drives the
+// Init-batching and resize iteration order so that behavior is deterministic.
+// (The perRepo map is built from an explicit literal in the RepoSelectedMsg
+// handler, because the three screens have different constructor signatures.)
 var perRepoViews = []view{viewPR, viewIssues, viewActions}
 
 // Model is the root router. It owns only routing state: the active view, the
@@ -34,11 +36,15 @@ var perRepoViews = []view{viewPR, viewIssues, viewActions}
 // global error, and the window dimensions it propagates.
 type Model struct {
 	active   view
-	repoList screen.Model          // persistent: survives back-navigation so the cursor is retained
-	perRepo  map[view]screen.Model // per-repo screens (pr/issue/action), built on selection, kept alive
-	err      error                 // sticky: once set, the overlay shows until quit
-	width    int
-	height   int
+	repoList screen.Model // persistent: survives back-navigation so the cursor is retained
+	// perRepo holds the per-repo screens (pr/issue/action), built on selection
+	// and kept alive so switching preserves each screen's state. It is mutated in
+	// place via map-reference semantics; do not clone Model and expect
+	// independent per-repo state.
+	perRepo map[view]screen.Model
+	err     error // sticky: once set, the overlay shows until quit
+	width   int
+	height  int
 }
 
 var _ tea.Model = Model{}
