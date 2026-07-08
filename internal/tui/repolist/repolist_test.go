@@ -78,3 +78,38 @@ func TestReposMsgPopulates(t *testing.T) {
 		t.Fatalf("expected 1 repo, got %d", len(um.repos))
 	}
 }
+
+func TestRefreshEmitsForceFetch(t *testing.T) {
+	m := Model{repos: []ghClient.Repository{repo("o", "a")}}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd == nil {
+		t.Fatal("expected a refresh command, got nil")
+	}
+	if updated.(Model).loading {
+		t.Fatal("refresh must not re-enter the loading state (existing list stays visible)")
+	}
+}
+
+func TestReposMsgClampsCursorWhenListShrinks(t *testing.T) {
+	m := Model{
+		repos:  []ghClient.Repository{repo("o", "a"), repo("o", "b"), repo("o", "c")},
+		cursor: 2,
+	}
+	updated, _ := m.Update(reposMsg([]ghClient.Repository{repo("o", "a")}))
+	um := updated.(Model)
+	if um.cursor != 0 {
+		t.Fatalf("cursor = %d, want 0 after list shrank to 1", um.cursor)
+	}
+	// enter must not panic and must select the valid remaining repo.
+	_, cmd := um.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected a selection command after refresh")
+	}
+	sel, ok := cmd().(RepoSelectedMsg)
+	if !ok {
+		t.Fatalf("expected RepoSelectedMsg, got %T", cmd())
+	}
+	if sel.Name != "a" {
+		t.Fatalf("selected %q, want a", sel.Name)
+	}
+}

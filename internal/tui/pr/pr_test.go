@@ -137,3 +137,83 @@ func TestLoadingViewRendersTabBar(t *testing.T) {
 		t.Fatalf("loading view lost its fetch message:\n%s", v)
 	}
 }
+
+func TestRefreshEmitsForceFetchAndSetsMessage(t *testing.T) {
+	m := withPRs(2)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	if cmd == nil {
+		t.Fatal("expected a refresh command, got nil")
+	}
+	if got := updated.(Model).message; got != "Refreshing..." {
+		t.Fatalf("message = %q, want %q", got, "Refreshing...")
+	}
+	if updated.(Model).loading {
+		t.Fatal("refresh must not re-enter the loading state (existing PRs stay visible)")
+	}
+	if len(updated.(Model).ctx.PRs) != 2 {
+		t.Fatal("refresh must keep the existing PRs visible")
+	}
+}
+
+func TestPRDataMsgClearsRefreshingMessage(t *testing.T) {
+	m := withPRs(2)
+	m.message = "Refreshing..."
+	ctx := ghClient.RepoContext{
+		Owner: "octocat",
+		Name:  "hello",
+		PRs:   []ghClient.PullRequest{{Number: 1, Title: "T", State: "open"}},
+	}
+	updated, _ := m.Update(prDataMsg(ctx))
+	if got := updated.(Model).message; got != "" {
+		t.Fatalf("message = %q, want empty after data lands", got)
+	}
+}
+
+func TestPRDataMsgClampsCursorWhenListShrinks(t *testing.T) {
+	m := withPRs(3)
+	m.cursor = 2
+	ctx := ghClient.RepoContext{
+		Owner: "octocat",
+		Name:  "hello",
+		PRs:   []ghClient.PullRequest{{Number: 1, Title: "T", State: "open"}},
+	}
+	// Must not panic: updateViewportContent indexes PRs[cursor].
+	updated, _ := m.Update(prDataMsg(ctx))
+	if got := updated.(Model).cursor; got != 0 {
+		t.Fatalf("cursor = %d, want 0 after list shrank to 1", got)
+	}
+}
+
+func TestPRDataMsgResetsScrollOnRefresh(t *testing.T) {
+	m := withPRs(1)
+	// A tall body so the viewport can actually scroll.
+	m.ctx.PRs[0].Body = strings.Repeat("line\n", 200)
+	m.updateViewportContent()
+	m.viewport.ScrollDown(50)
+	if m.viewport.AtTop() {
+		t.Fatal("precondition: expected viewport scrolled away from top")
+	}
+	ctx := ghClient.RepoContext{
+		Owner: "octocat",
+		Name:  "hello",
+		PRs:   []ghClient.PullRequest{{Number: 1, Title: "T", State: "open", Body: strings.Repeat("line\n", 200)}},
+	}
+	updated, _ := m.Update(prDataMsg(ctx))
+	if !updated.(Model).viewport.AtTop() {
+		t.Fatal("refresh should reset the viewport scroll to the top")
+	}
+}
+
+func TestPRDataMsgPreservesNonRefreshMessage(t *testing.T) {
+	m := withPRs(2)
+	m.message = "Opened PR #1 in browser"
+	ctx := ghClient.RepoContext{
+		Owner: "octocat",
+		Name:  "hello",
+		PRs:   []ghClient.PullRequest{{Number: 1, Title: "T", State: "open"}},
+	}
+	updated, _ := m.Update(prDataMsg(ctx))
+	if got := updated.(Model).message; got != "Opened PR #1 in browser" {
+		t.Fatalf("message = %q, want it preserved (only \"Refreshing...\" should be cleared)", got)
+	}
+}

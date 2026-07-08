@@ -21,6 +21,9 @@ const (
 	focusDetails
 )
 
+// refreshingMsg is the transient footer status shown while a manual refresh runs.
+const refreshingMsg = "Refreshing..."
+
 // Model is the pull-request split-pane screen.
 type Model struct {
 	ctx      ghClient.RepoContext
@@ -56,10 +59,11 @@ type prDataMsg ghClient.RepoContext
 // statusMsg carries a transient footer status message.
 type statusMsg string
 
-// fetchPRsCmd fetches the open PRs for the given repository.
-func fetchPRsCmd(owner, name string) tea.Cmd {
+// fetchPRsCmd fetches the open PRs for the given repository. force bypasses the
+// in-memory cache and refreshes the stored entry.
+func fetchPRsCmd(owner, name string, force bool) tea.Cmd {
 	return func() tea.Msg {
-		ctx, err := ghClient.FetchRepoPRs(owner, name)
+		ctx, err := ghClient.RepoPRs(owner, name, force)
 		if err != nil {
 			return screen.ErrMsg{Err: err}
 		}
@@ -85,9 +89,10 @@ func openBrowserCmd(prNumber int) tea.Cmd {
 	}
 }
 
-// Init starts fetching pull requests for this screen's repository.
+// Init starts fetching pull requests for this screen's repository (from cache
+// when available).
 func (m Model) Init() tea.Cmd {
-	return fetchPRsCmd(m.ctx.Owner, m.ctx.Name)
+	return fetchPRsCmd(m.ctx.Owner, m.ctx.Name, false)
 }
 
 // Update handles focus, navigation, PR actions, and data messages. It preserves
@@ -144,12 +149,23 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 				m.message = "Opening browser..."
 				cmds = append(cmds, openBrowserCmd(m.ctx.PRs[m.cursor].Number))
 			}
+		case "r":
+			// Manual refresh: bypass the cache, keep the current PRs visible.
+			m.message = refreshingMsg
+			cmds = append(cmds, fetchPRsCmd(m.ctx.Owner, m.ctx.Name, true))
 		}
 
 	case prDataMsg:
 		m.ctx = ghClient.RepoContext(msg)
 		m.loading = false
+		if m.message == refreshingMsg {
+			m.message = ""
+		}
+		if m.cursor >= len(m.ctx.PRs) {
+			m.cursor = max(len(m.ctx.PRs)-1, 0)
+		}
 		m.updateViewportContent()
+		m.viewport.GotoTop()
 
 	case statusMsg:
 		m.message = string(msg)
@@ -239,7 +255,7 @@ func (m Model) View() string {
 	header := fmt.Sprintf("%s\n Lazy GitHub | %s/%s \n\n", nav.Bar(nav.TabPRs), m.ctx.Owner, m.ctx.Name)
 	ui := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 
-	footerText := " [1/2/3] Views  •  [esc] Repo  •  [tab] Focus  •  [j/k] Scroll  •  [c] Checkout  •  [o] Web  •  [q] Quit"
+	footerText := " [1/2/3] Views  •  [esc] Repo  •  [tab] Focus  •  [j/k] Scroll  •  [c] Checkout  •  [o] Web  •  [r] Refresh  •  [q] Quit"
 	if m.message != "" {
 		footerText = fmt.Sprintf(" %s | %s", styles.Title.Render(m.message), footerText)
 	}
