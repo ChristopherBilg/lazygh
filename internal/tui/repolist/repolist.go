@@ -36,10 +36,11 @@ type RepoSelectedMsg struct {
 // reposMsg carries the fetched repositories.
 type reposMsg []ghClient.Repository
 
-// fetchReposCmd fetches the authenticated user's repositories.
-func fetchReposCmd() tea.Cmd {
+// fetchReposCmd fetches the authenticated user's repositories. force bypasses
+// the in-memory cache and refreshes the stored entry.
+func fetchReposCmd(force bool) tea.Cmd {
 	return func() tea.Msg {
-		repos, err := ghClient.FetchUserRepositories()
+		repos, err := ghClient.Repositories(force)
 		if err != nil {
 			return screen.ErrMsg{Err: err}
 		}
@@ -47,9 +48,9 @@ func fetchReposCmd() tea.Cmd {
 	}
 }
 
-// Init starts fetching repositories.
+// Init starts fetching repositories (from cache when available).
 func (m Model) Init() tea.Cmd {
-	return fetchReposCmd()
+	return fetchReposCmd(false)
 }
 
 // Update handles navigation and selection.
@@ -62,6 +63,9 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 	case reposMsg:
 		m.repos = msg
 		m.loading = false
+		if m.cursor >= len(m.repos) {
+			m.cursor = max(len(m.repos)-1, 0)
+		}
 
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -80,6 +84,9 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 					return RepoSelectedMsg{Owner: selected.Owner.Login, Name: selected.Name}
 				}
 			}
+		case "r":
+			// Manual refresh: bypass the cache, keep the current list visible.
+			return m, fetchReposCmd(true)
 		}
 	}
 	return m, nil
@@ -118,6 +125,6 @@ func (m Model) View() string {
 	box := styles.Menu.Width(m.width / 2).Render(s.String())
 	centeredBox := lipgloss.PlaceHorizontal(m.width, lipgloss.Center, box)
 
-	footer := " [j/k] Navigate  •  [enter] Select  •  [q] Quit"
+	footer := " [j/k] Navigate  •  [enter] Select  •  [r] Refresh  •  [q] Quit"
 	return fmt.Sprintf("\n%s\n\n%s", centeredBox, lipgloss.PlaceHorizontal(m.width, lipgloss.Center, footer))
 }
