@@ -108,7 +108,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		var cmds []tea.Cmd
 		for _, v := range perRepoViews {
-			cmds = append(cmds, m.perRepo[v].Init())
+			if s, ok := m.perRepo[v]; ok {
+				cmds = append(cmds, s.Init())
+			}
 		}
 		return m, tea.Batch(cmds...)
 
