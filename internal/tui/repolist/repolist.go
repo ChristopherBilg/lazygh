@@ -2,9 +2,11 @@
 package repolist
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -15,16 +17,22 @@ import (
 
 // Model is the repository-selection screen.
 type Model struct {
-	repos   []ghClient.Repository
-	cursor  int
-	loading bool
-	width   int
-	height  int
+	repos      []ghClient.Repository
+	cursor     int
+	loading    bool
+	refreshing bool
+	fetchErr   error
+	spinner    spinner.Model
+	width      int
+	height     int
 }
 
 // New returns a repository-selection screen in its initial loading state.
 func New() Model {
-	return Model{loading: true}
+	return Model{
+		loading: true,
+		spinner: spinner.New(spinner.WithSpinner(spinner.Dot)),
+	}
 }
 
 // RepoSelectedMsg is emitted upward when the user selects a repository.
@@ -36,36 +44,67 @@ type RepoSelectedMsg struct {
 // reposMsg carries the fetched repositories.
 type reposMsg []ghClient.Repository
 
+// TargetView addresses fetched repositories to the repo-list screen.
+func (reposMsg) TargetView() screen.ViewID { return screen.ViewRepoList }
+
 // fetchReposCmd fetches the authenticated user's repositories. force bypasses
-// the in-memory cache and refreshes the stored entry.
+// the in-memory cache and refreshes the stored entry. A client-init failure is
+// fatal (ErrMsg); any other failure is a recoverable FetchErrMsg.
 func fetchReposCmd(force bool) tea.Cmd {
 	return func() tea.Msg {
 		repos, err := ghClient.Repositories(force)
 		if err != nil {
-			return screen.ErrMsg{Err: err}
+			if errors.Is(err, ghClient.ErrClientInit) {
+				return screen.ErrMsg{Err: err}
+			}
+			return screen.FetchErrMsg{View: screen.ViewRepoList, Err: err}
 		}
 		return reposMsg(repos)
 	}
 }
 
-// Init starts fetching repositories (from cache when available).
+// Init starts fetching repositories (from cache when available) and the spinner.
 func (m Model) Init() tea.Cmd {
-	return fetchReposCmd(false)
+	return tea.Batch(fetchReposCmd(false), m.spinner.Tick)
 }
 
 // Update handles navigation and selection.
 func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
+	var (
+		cmd  tea.Cmd
+		cmds []tea.Cmd
+	)
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 
+	case spinner.TickMsg:
+		// Ticks are not addressed, so they only reach the active screen. If the
+		// user switches tabs mid-refresh the animation can freeze until the fetch
+		// resolves — an accepted cosmetic limitation (see the plan's known-limitation
+		// note). Correctness is unaffected: the non-fatal result still lands via the
+		// addressed reposMsg/FetchErrMsg, which clears refreshing regardless.
+		if !m.loading && !m.refreshing {
+			return m, nil // stop the tick loop once fetching ends
+		}
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+
 	case reposMsg:
 		m.repos = msg
 		m.loading = false
+		m.refreshing = false
+		m.fetchErr = nil
 		if m.cursor >= len(m.repos) {
 			m.cursor = max(len(m.repos)-1, 0)
 		}
+
+	case screen.FetchErrMsg:
+		m.loading = false
+		m.refreshing = false
+		m.fetchErr = msg.Err
 
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -86,16 +125,32 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 			}
 		case "r":
 			// Manual refresh: bypass the cache, keep the current list visible.
-			return m, fetchReposCmd(true)
+			wasFetching := m.loading || m.refreshing
+			m.fetchErr = nil
+			if len(m.repos) == 0 {
+				m.loading = true
+			} else {
+				m.refreshing = true
+			}
+			cmds = append(cmds, fetchReposCmd(true))
+			if !wasFetching {
+				cmds = append(cmds, m.spinner.Tick)
+			}
 		}
 	}
-	return m, nil
+
+	return m, tea.Batch(cmds...)
 }
 
 // View renders the repository list.
 func (m Model) View() string {
 	if m.loading {
-		return "\n  Fetching your repositories...\n"
+		return fmt.Sprintf("\n  %sFetching your repositories...\n", m.spinner.View())
+	}
+
+	if m.fetchErr != nil && len(m.repos) == 0 {
+		msg := styles.Error.Render(fmt.Sprintf("Failed to load repositories: %v (press r to retry)", m.fetchErr))
+		return fmt.Sprintf("\n  %s\n", styles.Truncate(msg, m.width))
 	}
 
 	var s strings.Builder
@@ -125,6 +180,20 @@ func (m Model) View() string {
 	box := styles.Menu.Width(m.width / 2).Render(s.String())
 	centeredBox := lipgloss.PlaceHorizontal(m.width, lipgloss.Center, box)
 
-	footer := " [j/k] Navigate  •  [enter] Select  •  [r] Refresh  •  [q] Quit"
+	footer := m.footer()
 	return fmt.Sprintf("\n%s\n\n%s", centeredBox, lipgloss.PlaceHorizontal(m.width, lipgloss.Center, footer))
+}
+
+// footer renders the hint bar, or a refresh spinner / non-fatal refresh error
+// when one is active.
+func (m Model) footer() string {
+	hints := " [j/k] Navigate  •  [enter] Select  •  [r] Refresh  •  [q] Quit"
+	switch {
+	case m.refreshing:
+		return fmt.Sprintf(" %sRefreshing...  %s", m.spinner.View(), hints)
+	case m.fetchErr != nil:
+		return styles.Truncate(styles.Error.Render(fmt.Sprintf(" Refresh failed: %v (press r to retry)", m.fetchErr)), m.width)
+	default:
+		return hints
+	}
 }
