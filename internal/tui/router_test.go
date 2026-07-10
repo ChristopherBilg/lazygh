@@ -181,3 +181,33 @@ func TestAllPerRepoScreensBuiltOnSelection(t *testing.T) {
 		}
 	}
 }
+
+// recorderScreen is a test double that records the messages it receives, used
+// to prove the router delivers addressed results to a specific (non-active) view.
+type recorderScreen struct{ got []tea.Msg }
+
+func (r *recorderScreen) Init() tea.Cmd { return nil }
+func (r *recorderScreen) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
+	r.got = append(r.got, msg)
+	return r, nil
+}
+func (r *recorderScreen) View() string { return "" }
+
+func TestAddressedMsgRoutedToOriginatingView(t *testing.T) {
+	prRec := &recorderScreen{}
+	issuesRec := &recorderScreen{}
+	m := Model{
+		active:  viewIssues, // a DIFFERENT view is active
+		perRepo: map[view]screen.Model{viewPR: prRec, viewIssues: issuesRec},
+	}
+	m.Update(screen.FetchErrMsg{View: screen.ViewPR, Err: errors.New("boom")})
+	if len(prRec.got) != 1 {
+		t.Fatalf("PR view received %d messages, want 1 (addressed delivery failed)", len(prRec.got))
+	}
+	if fe, ok := prRec.got[0].(screen.FetchErrMsg); !ok || fe.Err == nil || fe.Err.Error() != "boom" {
+		t.Fatalf("PR view got %#v, want the FetchErrMsg with err \"boom\"", prRec.got[0])
+	}
+	if len(issuesRec.got) != 0 {
+		t.Fatalf("Issues view (active) received %d messages, want 0", len(issuesRec.got))
+	}
+}

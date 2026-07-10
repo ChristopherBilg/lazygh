@@ -1,12 +1,15 @@
 package pr
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 
 	ghClient "github.com/ChristopherBilg/lazygh/internal/github"
+	"github.com/ChristopherBilg/lazygh/internal/tui/screen"
 )
 
 // withPRs builds a loaded PR screen with n synthetic pull requests.
@@ -138,34 +141,35 @@ func TestLoadingViewRendersTabBar(t *testing.T) {
 	}
 }
 
-func TestRefreshEmitsForceFetchAndSetsMessage(t *testing.T) {
+func TestRefreshEntersRefreshingState(t *testing.T) {
 	m := withPRs(2)
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	um := updated.(Model)
 	if cmd == nil {
 		t.Fatal("expected a refresh command, got nil")
 	}
-	if got := updated.(Model).message; got != "Refreshing..." {
-		t.Fatalf("message = %q, want %q", got, "Refreshing...")
+	if !um.refreshing {
+		t.Fatal("expected refreshing=true after 'r' with existing PRs")
 	}
-	if updated.(Model).loading {
+	if um.loading {
 		t.Fatal("refresh must not re-enter the loading state (existing PRs stay visible)")
 	}
-	if len(updated.(Model).ctx.PRs) != 2 {
+	if len(um.ctx.PRs) != 2 {
 		t.Fatal("refresh must keep the existing PRs visible")
 	}
 }
 
-func TestPRDataMsgClearsRefreshingMessage(t *testing.T) {
+func TestPRDataMsgClearsRefreshingState(t *testing.T) {
 	m := withPRs(2)
-	m.message = "Refreshing..."
+	m.refreshing = true
 	ctx := ghClient.RepoContext{
 		Owner: "octocat",
 		Name:  "hello",
 		PRs:   []ghClient.PullRequest{{Number: 1, Title: "T", State: "open"}},
 	}
 	updated, _ := m.Update(prDataMsg(ctx))
-	if got := updated.(Model).message; got != "" {
-		t.Fatalf("message = %q, want empty after data lands", got)
+	if updated.(Model).refreshing {
+		t.Fatal("expected refreshing=false after data lands")
 	}
 }
 
@@ -215,5 +219,94 @@ func TestPRDataMsgPreservesNonRefreshMessage(t *testing.T) {
 	updated, _ := m.Update(prDataMsg(ctx))
 	if got := updated.(Model).message; got != "Opened PR #1 in browser" {
 		t.Fatalf("message = %q, want it preserved (only \"Refreshing...\" should be cleared)", got)
+	}
+}
+
+func TestPRDataMsgTargetView(t *testing.T) {
+	if prDataMsg(ghClient.RepoContext{}).TargetView() != screen.ViewPR {
+		t.Fatal("prDataMsg must target the PR view")
+	}
+}
+
+func TestPRDataMsgClearsFetchErr(t *testing.T) {
+	m := withPRs(1)
+	m.fetchErr = errors.New("old")
+	ctx := ghClient.RepoContext{Owner: "o", Name: "n", PRs: []ghClient.PullRequest{{Number: 1}}}
+	updated, _ := m.Update(prDataMsg(ctx))
+	if updated.(Model).fetchErr != nil {
+		t.Fatal("expected fetchErr cleared after successful data")
+	}
+}
+
+func TestFetchErrMsgWithNoDataShowsError(t *testing.T) {
+	m := New("octocat", "hello", 100, 40) // loading, no PRs
+	updated, _ := m.Update(screen.FetchErrMsg{View: screen.ViewPR, Err: errors.New("boom")})
+	um := updated.(Model)
+	if um.loading {
+		t.Fatal("expected loading cleared after fetch error")
+	}
+	v := um.View()
+	if !strings.Contains(v, "Failed to load PRs") || !strings.Contains(v, "boom") {
+		t.Fatalf("expected error view with reason, got:\n%s", v)
+	}
+	if !strings.Contains(v, "press r to retry") {
+		t.Fatalf("expected retry hint, got:\n%s", v)
+	}
+}
+
+func TestFetchErrMsgWithDataKeepsListAndFooterError(t *testing.T) {
+	m := withPRs(2)
+	m.refreshing = true
+	updated, _ := m.Update(screen.FetchErrMsg{View: screen.ViewPR, Err: errors.New("timeout")})
+	um := updated.(Model)
+	if um.refreshing {
+		t.Fatal("expected refreshing cleared after fetch error")
+	}
+	if len(um.ctx.PRs) != 2 {
+		t.Fatal("stale PRs must be retained on refresh error")
+	}
+	v := um.View()
+	if !strings.Contains(v, "Refresh failed") || !strings.Contains(v, "timeout") {
+		t.Fatalf("expected footer refresh error, got:\n%s", v)
+	}
+	if !strings.Contains(v, "Pull Requests") {
+		t.Fatalf("expected the PR list still rendered, got:\n%s", v)
+	}
+}
+
+func TestSpinnerTickIgnoredWhenIdle(t *testing.T) {
+	m := withPRs(1) // not loading, not refreshing
+	_, cmd := m.Update(spinner.TickMsg{})
+	if cmd != nil {
+		t.Fatal("expected no tick command when idle (tick loop should stop)")
+	}
+}
+
+func TestSpinnerTickContinuesWhileFetching(t *testing.T) {
+	m := New("octocat", "hello", 100, 40) // loading == true
+	_, cmd := m.Update(spinner.TickMsg{})
+	if cmd == nil {
+		t.Fatal("expected the tick loop to continue while loading")
+	}
+}
+
+func TestRefreshingViewShowsSpinnerFooter(t *testing.T) {
+	m := withPRs(2)
+	m.refreshing = true
+	v := m.View()
+	if !strings.Contains(v, "Refreshing...") {
+		t.Fatalf("expected footer to show Refreshing..., got:\n%s", v)
+	}
+	if !strings.Contains(v, "Pull Requests") {
+		t.Fatalf("expected the PR list to stay visible while refreshing, got:\n%s", v)
+	}
+}
+
+func TestStatusMessageShownInFooter(t *testing.T) {
+	m := withPRs(2)
+	m.message = "Opened PR #1 in browser"
+	v := m.View()
+	if !strings.Contains(v, "Opened PR #1 in browser") {
+		t.Fatalf("expected footer to show the status message, got:\n%s", v)
 	}
 }

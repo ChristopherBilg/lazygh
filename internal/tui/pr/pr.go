@@ -2,9 +2,11 @@
 package pr
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -21,31 +23,31 @@ const (
 	focusDetails
 )
 
-// refreshingMsg is the transient footer status shown while a manual refresh runs.
-const refreshingMsg = "Refreshing..."
-
 // Model is the pull-request split-pane screen.
 type Model struct {
-	ctx      ghClient.RepoContext
-	cursor   int
-	focus    int
-	loading  bool
-	message  string
-	viewport viewport.Model
-	width    int
-	height   int
-	ready    bool
+	ctx        ghClient.RepoContext
+	cursor     int
+	focus      int
+	loading    bool
+	refreshing bool
+	fetchErr   error
+	message    string
+	spinner    spinner.Model
+	viewport   viewport.Model
+	width      int
+	height     int
+	ready      bool
 }
 
 // New returns a PR screen for the given repository, sized to the current window.
 // The repository owner/name are stored immediately so the loading view can show
-// the repository name (a deliberate, approved improvement over the previous
-// blank name on first load).
+// the repository name.
 func New(owner, name string, width, height int) Model {
 	m := Model{
 		ctx:     ghClient.RepoContext{Owner: owner, Name: name},
 		focus:   focusList,
 		loading: true,
+		spinner: spinner.New(spinner.WithSpinner(spinner.Dot)),
 		width:   width,
 		height:  height,
 	}
@@ -56,16 +58,23 @@ func New(owner, name string, width, height int) Model {
 // prDataMsg carries fetched pull-request data.
 type prDataMsg ghClient.RepoContext
 
+// TargetView addresses fetched PR data to the pull-request screen.
+func (prDataMsg) TargetView() screen.ViewID { return screen.ViewPR }
+
 // statusMsg carries a transient footer status message.
 type statusMsg string
 
 // fetchPRsCmd fetches the open PRs for the given repository. force bypasses the
-// in-memory cache and refreshes the stored entry.
+// in-memory cache. A client-init failure is fatal (ErrMsg); any other failure is
+// a recoverable FetchErrMsg.
 func fetchPRsCmd(owner, name string, force bool) tea.Cmd {
 	return func() tea.Msg {
 		ctx, err := ghClient.RepoPRs(owner, name, force)
 		if err != nil {
-			return screen.ErrMsg{Err: err}
+			if errors.Is(err, ghClient.ErrClientInit) {
+				return screen.ErrMsg{Err: err}
+			}
+			return screen.FetchErrMsg{View: screen.ViewPR, Err: err}
 		}
 		return prDataMsg(ctx)
 	}
@@ -74,7 +83,7 @@ func fetchPRsCmd(owner, name string, force bool) tea.Cmd {
 func checkoutCmd(prNumber int) tea.Cmd {
 	return func() tea.Msg {
 		if err := ghClient.CheckoutPR(prNumber); err != nil {
-			return screen.ErrMsg{Err: err}
+			return statusMsg(fmt.Sprintf("Checkout failed: %v", err))
 		}
 		return statusMsg(fmt.Sprintf("Successfully checked out PR #%d", prNumber))
 	}
@@ -83,22 +92,18 @@ func checkoutCmd(prNumber int) tea.Cmd {
 func openBrowserCmd(prNumber int) tea.Cmd {
 	return func() tea.Msg {
 		if err := ghClient.OpenPRInBrowser(prNumber); err != nil {
-			return screen.ErrMsg{Err: err}
+			return statusMsg(fmt.Sprintf("Open in browser failed: %v", err))
 		}
 		return statusMsg(fmt.Sprintf("Opened PR #%d in browser", prNumber))
 	}
 }
 
-// Init starts fetching pull requests for this screen's repository (from cache
-// when available).
+// Init starts fetching pull requests (from cache when available) and the spinner.
 func (m Model) Init() tea.Cmd {
-	return fetchPRsCmd(m.ctx.Owner, m.ctx.Name, false)
+	return tea.Batch(fetchPRsCmd(m.ctx.Owner, m.ctx.Name, false), m.spinner.Tick)
 }
 
-// Update handles focus, navigation, PR actions, and data messages. It preserves
-// the original sequencing: handle the message, then forward the raw message to
-// the embedded viewport (so mouse-scroll and the viewport's own keymap behave
-// exactly as before).
+// Update handles focus, navigation, PR actions, and data messages.
 func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 	var (
 		cmd  tea.Cmd
@@ -110,6 +115,17 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.resizeViewport()
+
+	case spinner.TickMsg:
+		// Ticks are not addressed, so they only reach the active screen; a
+		// mid-refresh tab switch can freeze the animation until the fetch
+		// resolves — an accepted cosmetic limitation (see the plan). Correctness
+		// is unaffected: the addressed prDataMsg/FetchErrMsg still clears state.
+		if !m.loading && !m.refreshing {
+			return m, nil // stop the tick loop once fetching ends
+		}
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
 
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -151,21 +167,35 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 			}
 		case "r":
 			// Manual refresh: bypass the cache, keep the current PRs visible.
-			m.message = refreshingMsg
+			wasFetching := m.loading || m.refreshing
+			m.fetchErr = nil
+			m.message = ""
+			if len(m.ctx.PRs) == 0 {
+				m.loading = true
+			} else {
+				m.refreshing = true
+			}
 			cmds = append(cmds, fetchPRsCmd(m.ctx.Owner, m.ctx.Name, true))
+			if !wasFetching {
+				cmds = append(cmds, m.spinner.Tick)
+			}
 		}
 
 	case prDataMsg:
 		m.ctx = ghClient.RepoContext(msg)
 		m.loading = false
-		if m.message == refreshingMsg {
-			m.message = ""
-		}
+		m.refreshing = false
+		m.fetchErr = nil
 		if m.cursor >= len(m.ctx.PRs) {
 			m.cursor = max(len(m.ctx.PRs)-1, 0)
 		}
 		m.updateViewportContent()
 		m.viewport.GotoTop()
+
+	case screen.FetchErrMsg:
+		m.loading = false
+		m.refreshing = false
+		m.fetchErr = msg.Err
 
 	case statusMsg:
 		m.message = string(msg)
@@ -215,10 +245,15 @@ func (m *Model) updateViewportContent() {
 	m.viewport.SetContent(contentStyle.Render(fullText))
 }
 
-// View renders the split pane, or a loading message while PRs are fetched.
+// View renders the split pane, a loading spinner, or a non-fatal load error.
 func (m Model) View() string {
 	if m.loading {
-		return fmt.Sprintf("%s\n\n  Fetching PRs for %s...\n", nav.Bar(nav.TabPRs), m.ctx.Name)
+		return fmt.Sprintf("%s\n\n  %sFetching PRs for %s...\n", nav.Bar(nav.TabPRs), m.spinner.View(), m.ctx.Name)
+	}
+
+	if m.fetchErr != nil && len(m.ctx.PRs) == 0 {
+		msg := styles.Error.Render(fmt.Sprintf("Failed to load PRs: %v (press r to retry)", m.fetchErr))
+		return fmt.Sprintf("%s\n\n  %s\n", nav.Bar(nav.TabPRs), styles.Truncate(msg, m.width))
 	}
 
 	leftPaneWidth := (m.width * 3) / 10
@@ -256,9 +291,24 @@ func (m Model) View() string {
 	ui := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 
 	footerText := " [1/2/3] Views  •  [esc] Repo  •  [tab] Focus  •  [j/k] Scroll  •  [c] Checkout  •  [o] Web  •  [r] Refresh  •  [q] Quit"
-	if m.message != "" {
-		footerText = fmt.Sprintf(" %s | %s", styles.Title.Render(m.message), footerText)
+	if status := m.statusLine(); status != "" {
+		footerText = fmt.Sprintf(" %s | %s", status, footerText)
 	}
 
 	return header + ui + "\n\n" + footerText
+}
+
+// statusLine renders the highest-priority transient status: a refresh spinner, a
+// non-fatal refresh error, or a plain status message (checkout/browser result).
+func (m Model) statusLine() string {
+	switch {
+	case m.refreshing:
+		return fmt.Sprintf("%sRefreshing...", m.spinner.View())
+	case m.fetchErr != nil:
+		return styles.Truncate(styles.Error.Render(fmt.Sprintf("Refresh failed: %v (press r to retry)", m.fetchErr)), m.width)
+	case m.message != "":
+		return styles.Truncate(styles.Title.Render(m.message), m.width)
+	default:
+		return ""
+	}
 }

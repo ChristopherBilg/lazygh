@@ -14,14 +14,20 @@ import (
 	"github.com/ChristopherBilg/lazygh/internal/tui/screen"
 )
 
-// view identifies which screen is currently active.
-type view int
+// view aliases screen.ViewID so async result messages (defined in the sub-model
+// packages) can address a specific screen without importing the router. The
+// local constant names are kept for readability within the router. An alias
+// rather than a defined type avoids explicit conversions at every call site
+// (view and screen.ViewID are interchangeable); the tradeoff is that any
+// view-specific method would have to live on screen.ViewID in the screen
+// package.
+type view = screen.ViewID
 
 const (
-	viewRepoList view = iota
-	viewPR
-	viewIssues
-	viewActions
+	viewRepoList = screen.ViewRepoList
+	viewPR       = screen.ViewPR
+	viewIssues   = screen.ViewIssues
+	viewActions  = screen.ViewActions
 )
 
 // perRepoViews lists the per-repo views in tab order (1/2/3). It drives the
@@ -119,18 +125,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Async fetch results are addressed to their originating view so they are
+	// delivered even when the user has switched to another tab mid-fetch.
+	if a, ok := msg.(screen.Addressed); ok {
+		return m.routeTo(a.TargetView(), msg)
+	}
+
 	return m.forward(msg)
 }
 
-// forward sends a message to the active screen and stores the returned model.
+// forward sends a message to the active screen; it is routeTo targeted at the
+// active view.
 func (m Model) forward(msg tea.Msg) (tea.Model, tea.Cmd) {
+	return m.routeTo(m.active, msg)
+}
+
+// routeTo delivers a message to a specific view regardless of which one is
+// active, storing the returned model. It backs addressed async delivery so a
+// background fetch's data/error reaches the view that started it.
+func (m Model) routeTo(target view, msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
-	if m.active == viewRepoList {
+	if target == viewRepoList {
 		m.repoList, cmd = m.repoList.Update(msg)
 		return m, cmd
 	}
-	if s, ok := m.perRepo[m.active]; ok {
-		m.perRepo[m.active], cmd = s.Update(msg)
+	if s, ok := m.perRepo[target]; ok {
+		m.perRepo[target], cmd = s.Update(msg)
 	}
 	return m, cmd
 }
