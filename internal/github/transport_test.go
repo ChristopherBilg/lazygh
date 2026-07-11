@@ -66,7 +66,50 @@ func TestLoggingTransportLogsFailure(t *testing.T) {
 	if _, err := tr.RoundTrip(req); !errors.Is(err, wantErr) {
 		t.Fatalf("RoundTrip err = %v, want %v", err, wantErr)
 	}
-	if out := buf.String(); !strings.Contains(out, "github request failed") {
-		t.Fatalf("log missing failure line; got:\n%s", out)
+	out := buf.String()
+	for _, want := range []string{"github request failed", "method=GET", "path=/user/repos", "dial tcp: boom"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("failure log missing %q; got:\n%s", want, out)
+		}
+	}
+}
+
+func TestLoggingTransportNoRateLimitHeader(t *testing.T) {
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     http.Header{},
+		Body:       io.NopCloser(strings.NewReader("{}")),
+	}
+	var buf bytes.Buffer
+	tr := loggingTransport{base: fakeRoundTripper{resp: resp}, logger: bufLogger(&buf)}
+
+	req, _ := http.NewRequest(http.MethodGet, "https://api.github.com/user/repos", nil)
+	if _, err := tr.RoundTrip(req); err != nil {
+		t.Fatalf("RoundTrip error: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "github request") {
+		t.Fatalf("expected request log; got:\n%s", out)
+	}
+	if strings.Contains(out, "github rate limit") {
+		t.Fatalf("rate-limit line must be suppressed without X-RateLimit-Limit; got:\n%s", out)
+	}
+}
+
+func TestLoggingTransportUsesDefaultLogger(t *testing.T) {
+	orig := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(orig) })
+	var buf bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	resp := &http.Response{StatusCode: 204, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(""))}
+	tr := loggingTransport{base: fakeRoundTripper{resp: resp}} // no logger => slog.Default()
+
+	req, _ := http.NewRequest(http.MethodGet, "https://api.github.com/rate_limit", nil)
+	if _, err := tr.RoundTrip(req); err != nil {
+		t.Fatalf("RoundTrip error: %v", err)
+	}
+	if out := buf.String(); !strings.Contains(out, "github request") || !strings.Contains(out, "path=/rate_limit") {
+		t.Fatalf("expected request logged to default logger; got:\n%s", out)
 	}
 }

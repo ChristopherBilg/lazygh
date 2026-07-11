@@ -1,8 +1,11 @@
 package github
 
 import (
+	"bytes"
 	"errors"
+	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -105,4 +108,29 @@ func TestGetOrLoadConcurrent(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestGetOrLoadLogsHitAndMiss(t *testing.T) {
+	origLogger := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(origLogger) })
+	var buf bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	c := NewCache()
+	load := func() (int, error) { return 1, nil }
+
+	if _, err := getOrLoad(c, "k", false, load); err != nil {
+		t.Fatalf("load error: %v", err)
+	}
+	if out := buf.String(); !strings.Contains(out, "cache load") || !strings.Contains(out, "key=k") {
+		t.Fatalf("miss/load log missing; got: %s", out)
+	}
+
+	buf.Reset()
+	if _, err := getOrLoad(c, "k", false, load); err != nil {
+		t.Fatalf("hit error: %v", err)
+	}
+	if out := buf.String(); !strings.Contains(out, "cache hit") {
+		t.Fatalf("hit log missing; got: %s", out)
+	}
 }
