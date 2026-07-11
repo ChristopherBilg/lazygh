@@ -4,7 +4,6 @@ package tui
 
 import (
 	"fmt"
-	"log/slog"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -122,7 +121,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case screen.ErrMsg:
-		slog.Error("fatal view error", "err", msg.Err)
 		m.err = msg.Err
 		return m, nil
 	}
@@ -130,9 +128,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Async fetch results are addressed to their originating view so they are
 	// delivered even when the user has switched to another tab mid-fetch.
 	if a, ok := msg.(screen.Addressed); ok {
-		if fe, ok := msg.(screen.FetchErrMsg); ok {
-			slog.Warn("view fetch error", "view", fe.View, "err", fe.Err)
-		}
 		return m.routeTo(a.TargetView(), msg)
 	}
 
