@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/cli/go-gh/v2"
@@ -57,7 +58,14 @@ type RepoContext struct {
 // from the gh CLI's configuration (verified: optionsNeedResolution is true when
 // Host/AuthToken are empty, and resolveOptions preserves Timeout).
 func restClientOptions() api.ClientOptions {
-	return api.ClientOptions{Timeout: RESTTimeout}
+	return api.ClientOptions{
+		Timeout: RESTTimeout,
+		// Log every request and its rate-limit headers to the file logger.
+		Transport: loggingTransport{base: http.DefaultTransport},
+		// Never let GH_DEBUG make go-gh write HTTP logs to stderr and corrupt
+		// the alt-screen (see go-gh pkg/api/http_client.go).
+		LogIgnoreEnv: true,
+	}
 }
 
 // newRESTClient builds a REST client with a bounded per-request timeout. A

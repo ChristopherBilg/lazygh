@@ -99,3 +99,13 @@ func TestOpenPRInBrowserAppliesDeadline(t *testing.T) {
 		t.Fatalf("args = %v, want %v", gotArgs, want)
 	}
 }
+
+func TestRESTClientOptionsEnablesTUISafeLogging(t *testing.T) {
+	opts := restClientOptions()
+	if !opts.LogIgnoreEnv {
+		t.Error("LogIgnoreEnv = false, want true (GH_DEBUG must not write to stderr)")
+	}
+	if _, ok := opts.Transport.(loggingTransport); !ok {
+		t.Errorf("Transport is %T, want loggingTransport", opts.Transport)
+	}
+}
