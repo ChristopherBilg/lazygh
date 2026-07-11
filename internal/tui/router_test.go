@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"bytes"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -209,5 +211,34 @@ func TestAddressedMsgRoutedToOriginatingView(t *testing.T) {
 	}
 	if len(issuesRec.got) != 0 {
 		t.Fatalf("Issues view (active) received %d messages, want 0", len(issuesRec.got))
+	}
+}
+
+func TestErrMsgLogsError(t *testing.T) {
+	orig := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(orig) })
+	var buf bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	m := NewModel()
+	m.Update(screen.ErrMsg{Err: errors.New("boom")})
+	if out := buf.String(); !strings.Contains(out, "fatal view error") || !strings.Contains(out, "boom") {
+		t.Fatalf("expected fatal error log, got: %s", out)
+	}
+}
+
+func TestFetchErrMsgLogsWarning(t *testing.T) {
+	orig := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(orig) })
+	var buf bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	m := Model{
+		active:  viewIssues,
+		perRepo: map[view]screen.Model{viewPR: &recorderScreen{}, viewIssues: &recorderScreen{}},
+	}
+	m.Update(screen.FetchErrMsg{View: screen.ViewPR, Err: errors.New("nope")})
+	if out := buf.String(); !strings.Contains(out, "view fetch error") || !strings.Contains(out, "nope") {
+		t.Fatalf("expected fetch error warning log, got: %s", out)
 	}
 }
