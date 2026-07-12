@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/cli/go-gh/v2"
@@ -52,12 +54,22 @@ type RepoContext struct {
 	PRs   []PullRequest
 }
 
-// restClientOptions returns the options every REST client is built with. Only
-// Timeout is set; host and auth token are left empty so go-gh resolves them
-// from the gh CLI's configuration (verified: optionsNeedResolution is true when
-// Host/AuthToken are empty, and resolveOptions preserves Timeout).
+// restClientOptions returns the options every REST client is built with. Timeout
+// bounds each request; Transport installs the logging round-tripper (request
+// traces + rate-limit headers); LogIgnoreEnv stops go-gh from writing HTTP logs
+// to stderr (which it does when GH_DEBUG is set) and corrupting the TUI. Host
+// and auth token are left empty so go-gh resolves them from the gh CLI's
+// configuration (optionsNeedResolution is true when Host/AuthToken are empty,
+// and resolveOptions preserves the fields set here).
 func restClientOptions() api.ClientOptions {
-	return api.ClientOptions{Timeout: RESTTimeout}
+	return api.ClientOptions{
+		Timeout: RESTTimeout,
+		// Log every request and its rate-limit headers to the file logger.
+		Transport: loggingTransport{base: http.DefaultTransport},
+		// Never let GH_DEBUG make go-gh write HTTP logs to stderr and corrupt
+		// the alt-screen (see go-gh pkg/api/http_client.go).
+		LogIgnoreEnv: true,
+	}
 }
 
 // newRESTClient builds a REST client with a bounded per-request timeout. A
@@ -112,12 +124,22 @@ func CheckoutPR(prNumber int) error {
 	ctx, cancel := context.WithTimeout(context.Background(), SubprocessTimeout)
 	defer cancel()
 	_, _, err := execContext(ctx, "pr", "checkout", fmt.Sprintf("%d", prNumber))
-	return err
+	if err != nil {
+		slog.Warn("checkout failed", "pr", prNumber, "err", err)
+		return err
+	}
+	slog.Info("checked out pr", "pr", prNumber)
+	return nil
 }
 
 func OpenPRInBrowser(prNumber int) error {
 	ctx, cancel := context.WithTimeout(context.Background(), SubprocessTimeout)
 	defer cancel()
 	_, _, err := execContext(ctx, "pr", "view", fmt.Sprintf("%d", prNumber), "--web")
-	return err
+	if err != nil {
+		slog.Warn("open in browser failed", "pr", prNumber, "err", err)
+		return err
+	}
+	slog.Info("opened pr in browser", "pr", prNumber)
+	return nil
 }

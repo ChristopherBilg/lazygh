@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -97,5 +99,81 @@ func TestOpenPRInBrowserAppliesDeadline(t *testing.T) {
 	}
 	if want := []string{"pr", "view", "9", "--web"}; !slices.Equal(gotArgs, want) {
 		t.Fatalf("args = %v, want %v", gotArgs, want)
+	}
+}
+
+func TestRESTClientOptionsEnablesTUISafeLogging(t *testing.T) {
+	opts := restClientOptions()
+	if !opts.LogIgnoreEnv {
+		t.Error("LogIgnoreEnv = false, want true (GH_DEBUG must not write to stderr)")
+	}
+	if _, ok := opts.Transport.(loggingTransport); !ok {
+		t.Errorf("Transport is %T, want loggingTransport", opts.Transport)
+	}
+}
+
+func TestCheckoutPRLogsSuccessAndFailure(t *testing.T) {
+	origExec := execContext
+	t.Cleanup(func() { execContext = origExec })
+	origLogger := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(origLogger) })
+
+	var buf bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	// Success path.
+	execContext = func(ctx context.Context, args ...string) (stdout, stderr bytes.Buffer, err error) {
+		return bytes.Buffer{}, bytes.Buffer{}, nil
+	}
+	if err := CheckoutPR(7); err != nil {
+		t.Fatalf("CheckoutPR success returned error: %v", err)
+	}
+	if out := buf.String(); !strings.Contains(out, "level=INFO") || !strings.Contains(out, "checked out pr") || !strings.Contains(out, "pr=7") {
+		t.Fatalf("success log missing; got: %s", out)
+	}
+
+	// Failure path.
+	buf.Reset()
+	execContext = func(ctx context.Context, args ...string) (stdout, stderr bytes.Buffer, err error) {
+		return bytes.Buffer{}, bytes.Buffer{}, errors.New("boom")
+	}
+	if err := CheckoutPR(7); err == nil {
+		t.Fatal("expected CheckoutPR to return the exec error")
+	}
+	if out := buf.String(); !strings.Contains(out, "level=WARN") || !strings.Contains(out, "checkout failed") || !strings.Contains(out, "boom") {
+		t.Fatalf("failure log missing; got: %s", out)
+	}
+}
+
+func TestOpenPRInBrowserLogsSuccessAndFailure(t *testing.T) {
+	origExec := execContext
+	t.Cleanup(func() { execContext = origExec })
+	origLogger := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(origLogger) })
+
+	var buf bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	// Success path.
+	execContext = func(ctx context.Context, args ...string) (stdout, stderr bytes.Buffer, err error) {
+		return bytes.Buffer{}, bytes.Buffer{}, nil
+	}
+	if err := OpenPRInBrowser(9); err != nil {
+		t.Fatalf("OpenPRInBrowser success returned error: %v", err)
+	}
+	if out := buf.String(); !strings.Contains(out, "level=INFO") || !strings.Contains(out, "opened pr in browser") || !strings.Contains(out, "pr=9") {
+		t.Fatalf("success log missing; got: %s", out)
+	}
+
+	// Failure path.
+	buf.Reset()
+	execContext = func(ctx context.Context, args ...string) (stdout, stderr bytes.Buffer, err error) {
+		return bytes.Buffer{}, bytes.Buffer{}, errors.New("boom")
+	}
+	if err := OpenPRInBrowser(9); err == nil {
+		t.Fatal("expected OpenPRInBrowser to return the exec error")
+	}
+	if out := buf.String(); !strings.Contains(out, "level=WARN") || !strings.Contains(out, "open in browser failed") || !strings.Contains(out, "boom") {
+		t.Fatalf("failure log missing; got: %s", out)
 	}
 }

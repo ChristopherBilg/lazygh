@@ -1,6 +1,7 @@
 package github
 
 import (
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -56,9 +57,11 @@ func (c *Cache) set(key string, value any) {
 func getOrLoad[T any](c *Cache, key string, force bool, load func() (T, error)) (T, error) {
 	if !force {
 		if v, ok := c.get(key); ok {
+			slog.Debug("cache hit", "key", key)
 			return v.(T), nil
 		}
 	}
+	slog.Debug("cache load", "key", key, "forced", force)
 	v, err := load()
 	if err != nil {
 		var zero T

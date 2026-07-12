@@ -1,7 +1,11 @@
 package tui
 
 import (
+	"bytes"
 	"errors"
+	"io"
+	"log/slog"
+	"os"
 	"strings"
 	"testing"
 
@@ -10,6 +14,13 @@ import (
 	"github.com/ChristopherBilg/lazygh/internal/tui/repolist"
 	"github.com/ChristopherBilg/lazygh/internal/tui/screen"
 )
+
+// TestMain silences the router's slog output by default so test runs stay
+// clean; individual tests that assert on log output install their own logger.
+func TestMain(m *testing.M) {
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	os.Exit(m.Run())
+}
 
 func TestRepoSelectedSwitchesToPRView(t *testing.T) {
 	m := NewModel()
@@ -209,5 +220,34 @@ func TestAddressedMsgRoutedToOriginatingView(t *testing.T) {
 	}
 	if len(issuesRec.got) != 0 {
 		t.Fatalf("Issues view (active) received %d messages, want 0", len(issuesRec.got))
+	}
+}
+
+func TestErrMsgLogsError(t *testing.T) {
+	orig := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(orig) })
+	var buf bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	m := NewModel()
+	m.Update(screen.ErrMsg{Err: errors.New("boom")})
+	if out := buf.String(); !strings.Contains(out, "level=ERROR") || !strings.Contains(out, "fatal view error") || !strings.Contains(out, "boom") {
+		t.Fatalf("expected fatal error log, got: %s", out)
+	}
+}
+
+func TestFetchErrMsgLogsWarning(t *testing.T) {
+	orig := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(orig) })
+	var buf bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	m := Model{
+		active:  viewIssues,
+		perRepo: map[view]screen.Model{viewPR: &recorderScreen{}, viewIssues: &recorderScreen{}},
+	}
+	m.Update(screen.FetchErrMsg{View: screen.ViewPR, Err: errors.New("nope")})
+	if out := buf.String(); !strings.Contains(out, "level=WARN") || !strings.Contains(out, "view fetch error") || !strings.Contains(out, "view=1") || !strings.Contains(out, "nope") {
+		t.Fatalf("expected fetch error warning log, got: %s", out)
 	}
 }
