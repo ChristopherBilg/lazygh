@@ -80,18 +80,25 @@ func fetchPRsCmd(owner, name string, force bool) tea.Cmd {
 	}
 }
 
-func checkoutCmd(prNumber int) tea.Cmd {
+// checkoutPR is indirected so checkoutCmd's result handling can be tested
+// without spawning `gh` or requiring a local git repository.
+var checkoutPR = ghClient.CheckoutPR
+
+func checkoutCmd(owner, name string, prNumber int) tea.Cmd {
 	return func() tea.Msg {
-		if err := ghClient.CheckoutPR(prNumber); err != nil {
+		if err := checkoutPR(owner, name, prNumber); err != nil {
+			if errors.Is(err, ghClient.ErrNotLocalRepo) {
+				return statusMsg(fmt.Sprintf("Checkout unavailable: lazygh isn't running in a clone of %s/%s", owner, name))
+			}
 			return statusMsg(fmt.Sprintf("Checkout failed: %v", err))
 		}
 		return statusMsg(fmt.Sprintf("Successfully checked out PR #%d", prNumber))
 	}
 }
 
-func openBrowserCmd(prNumber int) tea.Cmd {
+func openBrowserCmd(owner, name string, prNumber int) tea.Cmd {
 	return func() tea.Msg {
-		if err := ghClient.OpenPRInBrowser(prNumber); err != nil {
+		if err := ghClient.OpenPRInBrowser(owner, name, prNumber); err != nil {
 			return statusMsg(fmt.Sprintf("Open in browser failed: %v", err))
 		}
 		return statusMsg(fmt.Sprintf("Opened PR #%d in browser", prNumber))
@@ -158,12 +165,12 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		case "c":
 			if len(m.ctx.PRs) > 0 {
 				m.message = "Checking out branch..."
-				cmds = append(cmds, checkoutCmd(m.ctx.PRs[m.cursor].Number))
+				cmds = append(cmds, checkoutCmd(m.ctx.Owner, m.ctx.Name, m.ctx.PRs[m.cursor].Number))
 			}
 		case "o":
 			if len(m.ctx.PRs) > 0 {
 				m.message = "Opening browser..."
-				cmds = append(cmds, openBrowserCmd(m.ctx.PRs[m.cursor].Number))
+				cmds = append(cmds, openBrowserCmd(m.ctx.Owner, m.ctx.Name, m.ctx.PRs[m.cursor].Number))
 			}
 		case "r":
 			// Manual refresh: bypass the cache, keep the current PRs visible.

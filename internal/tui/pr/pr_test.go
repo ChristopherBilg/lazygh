@@ -310,3 +310,48 @@ func TestStatusMessageShownInFooter(t *testing.T) {
 		t.Fatalf("expected footer to show the status message, got:\n%s", v)
 	}
 }
+
+func TestCheckoutCmdUnavailableMessage(t *testing.T) {
+	orig := checkoutPR
+	t.Cleanup(func() { checkoutPR = orig })
+	checkoutPR = func(owner, name string, prNumber int) error { return ghClient.ErrNotLocalRepo }
+
+	msg := checkoutCmd("octocat", "other", 42)()
+	status, ok := msg.(statusMsg)
+	if !ok {
+		t.Fatalf("expected statusMsg, got %T", msg)
+	}
+	if got := string(status); !strings.Contains(got, "Checkout unavailable") || !strings.Contains(got, "octocat/other") {
+		t.Fatalf("status = %q, want 'Checkout unavailable' mentioning octocat/other", got)
+	}
+}
+
+func TestCheckoutCmdSuccessMessage(t *testing.T) {
+	orig := checkoutPR
+	t.Cleanup(func() { checkoutPR = orig })
+	checkoutPR = func(owner, name string, prNumber int) error { return nil }
+
+	msg := checkoutCmd("octocat", "hello", 7)()
+	status, ok := msg.(statusMsg)
+	if !ok {
+		t.Fatalf("expected statusMsg, got %T", msg)
+	}
+	if got := string(status); !strings.Contains(got, "Successfully checked out PR #7") {
+		t.Fatalf("status = %q, want success message", got)
+	}
+}
+
+func TestCheckoutCmdFailureMessage(t *testing.T) {
+	orig := checkoutPR
+	t.Cleanup(func() { checkoutPR = orig })
+	checkoutPR = func(owner, name string, prNumber int) error { return errors.New("boom") }
+
+	msg := checkoutCmd("octocat", "hello", 7)()
+	status, ok := msg.(statusMsg)
+	if !ok {
+		t.Fatalf("expected statusMsg, got %T", msg)
+	}
+	if got := string(status); !strings.Contains(got, "Checkout failed") || !strings.Contains(got, "boom") {
+		t.Fatalf("status = %q, want failure message", got)
+	}
+}

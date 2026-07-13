@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/cli/go-gh/v2"
 	"github.com/cli/go-gh/v2/pkg/api"
+	"github.com/cli/go-gh/v2/pkg/repository"
 )
 
 // Timeouts bound every outbound GitHub call so a slow or unreachable endpoint
@@ -31,6 +33,18 @@ var ErrClientInit = errors.New("github client init failed")
 // execContext is the subprocess runner, indirected so tests can substitute a
 // stub without spawning the real `gh` binary.
 var execContext = gh.ExecContext
+
+// currentRepo resolves the GitHub repository the current working directory is a
+// clone of. It is indirected so tests can substitute a stub without requiring a
+// real git repository. repository.Current reads git remotes (no network) and
+// honors the GH_REPO override.
+var currentRepo = repository.Current
+
+// ErrNotLocalRepo indicates the selected repository is not the one lazygh's
+// working directory is a clone of. CheckoutPR returns it instead of running
+// `gh pr checkout`, because checkout fetches the PR branch into the current git
+// tree and checking out another repository's PR there is not meaningful.
+var ErrNotLocalRepo = errors.New("selected repository is not lazygh's local repository")
 
 type Repository struct {
 	Name  string `json:"name"`
@@ -120,26 +134,48 @@ func FetchRepoPRs(owner, name string) (RepoContext, error) {
 	}, nil
 }
 
-func CheckoutPR(prNumber int) error {
+// CheckoutPR checks out the given PR of owner/name into the current git working
+// directory. `gh pr checkout` fetches into the current tree, so it is only
+// meaningful when lazygh is running inside a clone of the selected repository.
+// When the working directory is not that repository (or is not a resolvable git
+// repository at all), CheckoutPR returns ErrNotLocalRepo without running `gh`.
+func CheckoutPR(owner, name string, prNumber int) error {
+	repo := fmt.Sprintf("%s/%s", owner, name)
+
+	local, err := currentRepo()
+	if err != nil {
+		slog.Warn("checkout unavailable: cannot resolve local repository", "selected", repo, "pr", prNumber, "err", err)
+		return ErrNotLocalRepo
+	}
+	if !strings.EqualFold(local.Owner, owner) || !strings.EqualFold(local.Name, name) {
+		slog.Warn("checkout unavailable: not lazygh's local repository",
+			"selected", repo, "local", fmt.Sprintf("%s/%s", local.Owner, local.Name), "pr", prNumber)
+		return ErrNotLocalRepo
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), SubprocessTimeout)
 	defer cancel()
-	_, _, err := execContext(ctx, "pr", "checkout", fmt.Sprintf("%d", prNumber))
+	_, _, err = execContext(ctx, "pr", "checkout", fmt.Sprintf("%d", prNumber), "--repo", repo)
 	if err != nil {
-		slog.Warn("checkout failed", "pr", prNumber, "err", err)
+		slog.Warn("checkout failed", "repo", repo, "pr", prNumber, "err", err)
 		return err
 	}
-	slog.Info("checked out pr", "pr", prNumber)
+	slog.Info("checked out pr", "repo", repo, "pr", prNumber)
 	return nil
 }
 
-func OpenPRInBrowser(prNumber int) error {
+// OpenPRInBrowser opens the given PR of owner/name in the browser. Passing
+// --repo scopes `gh` to the selected repository instead of letting it resolve
+// one from the current working directory, so it works for any selected repo.
+func OpenPRInBrowser(owner, name string, prNumber int) error {
 	ctx, cancel := context.WithTimeout(context.Background(), SubprocessTimeout)
 	defer cancel()
-	_, _, err := execContext(ctx, "pr", "view", fmt.Sprintf("%d", prNumber), "--web")
+	repo := fmt.Sprintf("%s/%s", owner, name)
+	_, _, err := execContext(ctx, "pr", "view", fmt.Sprintf("%d", prNumber), "--repo", repo, "--web")
 	if err != nil {
-		slog.Warn("open in browser failed", "pr", prNumber, "err", err)
+		slog.Warn("open in browser failed", "repo", repo, "pr", prNumber, "err", err)
 		return err
 	}
-	slog.Info("opened pr in browser", "pr", prNumber)
+	slog.Info("opened pr in browser", "repo", repo, "pr", prNumber)
 	return nil
 }
