@@ -22,5 +22,8 @@ lint:
 tidy:
 	go mod tidy
 
+fix:
+	go fix ./...
+
 clean:
 	rm -rf bin
