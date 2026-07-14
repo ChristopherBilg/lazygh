@@ -225,6 +225,11 @@ func TestCheckoutPRRefusesWhenLocalRepoUnknown(t *testing.T) {
 	t.Cleanup(func() { execContext = origExec })
 	origRepo := currentRepo
 	t.Cleanup(func() { currentRepo = origRepo })
+	origLogger := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(origLogger) })
+
+	var buf bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 
 	currentRepo = func() (repository.Repository, error) {
 		return repository.Repository{}, errors.New("no git remotes configured")
@@ -241,6 +246,9 @@ func TestCheckoutPRRefusesWhenLocalRepoUnknown(t *testing.T) {
 	}
 	if called {
 		t.Fatal("expected gh not to run when the local repo cannot be resolved")
+	}
+	if out := buf.String(); !strings.Contains(out, "level=WARN") || !strings.Contains(out, "cannot resolve local repository") {
+		t.Fatalf("expected a WARN 'cannot resolve local repository' log; got: %s", out)
 	}
 }
 
