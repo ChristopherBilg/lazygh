@@ -15,8 +15,9 @@ import (
 )
 
 // Timeouts bound every outbound GitHub call so a slow or unreachable endpoint
-// fails within a fixed window instead of hanging indefinitely.
-const (
+// fails within a fixed window instead of hanging indefinitely. They are vars,
+// not consts, so Configure can override them from user config at startup.
+var (
 	// RESTTimeout bounds each REST API request (repo list, PR list).
 	RESTTimeout = 10 * time.Second
 	// SubprocessTimeout bounds each `gh` subprocess call. Checkout runs a
@@ -24,6 +25,26 @@ const (
 	// it gets a more generous bound.
 	SubprocessTimeout = 30 * time.Second
 )
+
+// repoPageSize is the per_page count for the repository-picker fetch. Overridable
+// via Configure; the GitHub REST API caps per_page at 100.
+var repoPageSize = 50
+
+// Configure overrides the default network and list limits from user
+// configuration. Call it once at startup, before any fetch. Non-positive values
+// are ignored, so a misconfiguration can't produce a zero timeout or an empty
+// page — the existing default stays in place.
+func Configure(restTimeout, subprocessTimeout time.Duration, pageSize int) {
+	if restTimeout > 0 {
+		RESTTimeout = restTimeout
+	}
+	if subprocessTimeout > 0 {
+		SubprocessTimeout = subprocessTimeout
+	}
+	if pageSize > 0 {
+		repoPageSize = pageSize
+	}
+}
 
 // ErrClientInit wraps a failure to construct the REST client (e.g. no auth
 // token resolvable). It is unrecoverable within the session, so the TUI treats
@@ -97,7 +118,14 @@ func newRESTClient() (*api.RESTClient, error) {
 	return client, nil
 }
 
-// FetchUserRepositories gets the 50 most recently pushed-to repositories for the authenticated user.
+// reposEndpoint builds the repo-picker REST path for a given page size.
+func reposEndpoint(pageSize int) string {
+	return fmt.Sprintf("user/repos?sort=pushed&per_page=%d", pageSize)
+}
+
+// FetchUserRepositories gets the most recently pushed-to repositories for the
+// authenticated user. The count (per_page) defaults to 50 and is overridable via
+// Configure.
 func FetchUserRepositories() ([]Repository, error) {
 	client, err := newRESTClient()
 	if err != nil {
@@ -106,7 +134,7 @@ func FetchUserRepositories() ([]Repository, error) {
 
 	var repos []Repository
 	// Sort by pushed to show the most actively developed repos first
-	if err := client.Get("user/repos?sort=pushed&per_page=50", &repos); err != nil {
+	if err := client.Get(reposEndpoint(repoPageSize), &repos); err != nil {
 		return nil, err
 	}
 

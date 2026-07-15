@@ -7,6 +7,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250319133953-166f707985bc
 	github.com/cli/go-gh/v2 v2.13.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -36,5 +37,4 @@ require (
 	golang.org/x/sys v0.38.0 // indirect
 	golang.org/x/term v0.30.0 // indirect
 	golang.org/x/text v0.23.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

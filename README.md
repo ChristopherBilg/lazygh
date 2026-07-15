@@ -2,6 +2,8 @@
 
 This document outlines the epics and work items required to build `lazygh` into a production-grade, extensible terminal UI application.
 
+> **Configuration:** lazygh reads an optional YAML config file at `~/.config/lazygh/config.yml`. See [docs/configuration.md](docs/configuration.md).
+
 ## Epic 0: Repository Foundations & Project Hygiene
 Before writing feature code, establish the baseline scaffolding, quality gates, and contributor-facing files that every production repository needs.
 
