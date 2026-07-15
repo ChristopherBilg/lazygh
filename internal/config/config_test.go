@@ -2,7 +2,10 @@ package config
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -64,10 +67,83 @@ func TestConfigPathHomeFallback(t *testing.T) {
 	}
 }
 
-func TestLoadDefaultsWhenAbsent(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir()) // empty dir: no config.yml
+func TestLoadWritesDefaultConfigWhenAbsent(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir) // empty dir: no config.yml yet
+	path := filepath.Join(dir, "lazygh", "config.yml")
+
 	if got := Load(); got != Default() {
 		t.Fatalf("Load() = %+v, want Default() %+v", got, Default())
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("expected a default config to be written at %s: %v", path, err)
+	}
+	content := string(data)
+	// Every key is commented out (so the written file is equivalent to "no file"),
+	// and each commented example shows the current default value — asserting the
+	// values guards against the template drifting from Default().
+	def := Default()
+	for _, want := range []string{
+		fmt.Sprintf("# rest_timeout: %s", def.GitHub.RESTTimeout),
+		fmt.Sprintf("# subprocess_timeout: %s", def.GitHub.SubprocessTimeout),
+		fmt.Sprintf("# repo_page_size: %d", def.GitHub.RepoPageSize),
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("written template missing commented default %q; got:\n%s", want, content)
+		}
+	}
+	// Loading again reads the freshly written template and still yields defaults.
+	if got := Load(); got != Default() {
+		t.Fatalf("reload of written template = %+v, want Default()", got)
+	}
+}
+
+func TestLoadDoesNotOverwriteExistingConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	writeConfig(t, dir, "github:\n  repo_page_size: 7\n")
+	path := filepath.Join(dir, "lazygh", "config.yml")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("setup read: %v", err)
+	}
+
+	got := Load()
+	if got.GitHub.RepoPageSize != 7 {
+		t.Errorf("RepoPageSize = %d, want 7 (existing file must be honored)", got.GitHub.RepoPageSize)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read after Load: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Errorf("existing config was modified;\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+func TestLoadDefaultsWhenTemplateWriteFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: permission bits do not restrict writes")
+	}
+	parent := t.TempDir()
+	roDir := filepath.Join(parent, "ro")
+	if err := os.Mkdir(roDir, 0o500); err != nil { // read+execute, no write
+		t.Fatalf("setup: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(roDir, 0o700) }) // let TempDir cleanup remove it
+	t.Setenv("XDG_CONFIG_HOME", roDir)
+	buf := captureLogs(t)
+
+	if got := Load(); got != Default() {
+		t.Fatalf("Load() = %+v, want Default() when the template can't be written", got)
+	}
+	if out := buf.String(); !strings.Contains(out, "level=WARN") || !strings.Contains(out, "could not write default") {
+		t.Fatalf("expected a WARN about failing to write the default; got: %s", out)
+	}
+	if _, err := os.Stat(filepath.Join(roDir, "lazygh", "config.yml")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("expected no config file to be created; stat err = %v", err)
 	}
 }
 

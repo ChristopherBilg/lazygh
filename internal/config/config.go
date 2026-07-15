@@ -55,11 +55,12 @@ type raw struct {
 }
 
 // Load reads the config file, applies defaults, validates values, and returns a
-// usable Config. It never returns an error: missing file -> defaults (debug
-// log); unreadable/malformed file -> defaults (error log); an individual invalid
-// value -> that field's default (warn log), keeping valid siblings. Unknown or
-// misspelled keys are ignored silently (not logged), since decoding is not
-// strict.
+// usable Config. It never returns an error: a missing file causes a commented
+// default template to be written (best-effort; a write failure is logged and
+// ignored) and defaults to be used; an unreadable/malformed file -> defaults
+// (error log); an individual invalid value -> that field's default (warn log),
+// keeping valid siblings. Unknown or misspelled keys are ignored silently (not
+// logged), since decoding is not strict.
 func Load() Config {
 	cfg := Default()
 
@@ -72,7 +73,14 @@ func Load() Config {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			slog.Debug("config: no file; using defaults", "path", path)
+			// First run: scaffold a commented template so the file is easy to
+			// find and edit. Best-effort — the app still runs on defaults if the
+			// write fails (e.g. a read-only home).
+			if werr := writeDefaultConfig(path); werr != nil {
+				slog.Warn("config: no file and could not write default; using defaults", "path", path, "err", werr)
+			} else {
+				slog.Info("config: wrote default config; using defaults", "path", path)
+			}
 			return cfg
 		}
 		slog.Error("config: cannot read file; using defaults", "path", path, "err", err)
@@ -102,6 +110,40 @@ func configPath() (string, error) {
 		return "", fmt.Errorf("resolve home dir: %w", err)
 	}
 	return filepath.Join(home, ".config", "lazygh", "config.yml"), nil
+}
+
+// defaultConfigTemplate is the commented template written on first run. Every key is
+// commented out, so the freshly written file behaves exactly like "no file" (all
+// built-in defaults) until the user uncomments a key. A commented template (vs.
+// active values) avoids pinning users to today's defaults if one changes later.
+const defaultConfigTemplate = `# lazygh configuration - uncomment and edit any key to override its default.
+# All keys are optional; a commented key uses lazygh's built-in default.
+# See docs/configuration.md for the full list of options.
+github:
+  # rest_timeout: 10s        # timeout for each GitHub REST API request
+  # subprocess_timeout: 30s  # timeout for each gh subprocess call
+  # repo_page_size: 50       # repositories fetched for the picker (1-100)
+`
+
+// writeDefaultConfig writes defaultConfigTemplate to path, creating the parent
+// directory (0o700; file 0o600, matching internal/logging). O_EXCL guarantees an
+// existing file is never overwritten.
+func writeDefaultConfig(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("create config file: %w", err)
+	}
+	if _, err := f.WriteString(defaultConfigTemplate); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("write config file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close config file: %w", err)
+	}
+	return nil
 }
 
 // applyRaw overlays present, valid fields from r onto cfg (which starts at

@@ -17,6 +17,13 @@ If `XDG_CONFIG_HOME` is unset, it defaults to:
 ~/.config/lazygh/config.yml
 ```
 
+On first run, if no config file exists, lazygh writes a commented template to
+this path (best-effort) so it is easy to find and edit. Every key starts
+commented out, so the fresh file behaves exactly like having no file — uncomment
+a key to override its default. If the file cannot be written (e.g. a read-only
+home), lazygh logs a warning and continues on defaults; it never overwrites an
+existing file.
+
 ## Options
 
 All keys are optional; any omitted key uses its default.
@@ -44,7 +51,9 @@ github:
 
 lazygh never crashes on bad configuration:
 
-- **No file** → defaults are used.
+- **No file** → a commented default template is written to the config path on
+  first run (best-effort) and defaults are used; if the write fails, a warning is
+  logged and defaults are still used.
 - **Unreadable or malformed file** (invalid YAML syntax, or a value whose type
   can't be decoded — e.g. `github:` set to a list, or `repo_page_size: "50"` as a
   quoted string) → a single error is written to the log file and all defaults
