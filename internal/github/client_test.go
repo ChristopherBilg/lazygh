@@ -274,3 +274,44 @@ func TestCheckoutPRMatchesCaseInsensitively(t *testing.T) {
 		t.Fatalf("args = %v, want %v", gotArgs, want)
 	}
 }
+
+func TestReposEndpoint(t *testing.T) {
+	if got, want := reposEndpoint(50), "user/repos?sort=pushed&per_page=50"; got != want {
+		t.Errorf("reposEndpoint(50) = %q, want %q", got, want)
+	}
+	if got, want := reposEndpoint(10), "user/repos?sort=pushed&per_page=10"; got != want {
+		t.Errorf("reposEndpoint(10) = %q, want %q", got, want)
+	}
+}
+
+func TestConfigureOverridesDefaults(t *testing.T) {
+	origREST, origSub, origPage := RESTTimeout, SubprocessTimeout, repoPageSize
+	t.Cleanup(func() { RESTTimeout, SubprocessTimeout, repoPageSize = origREST, origSub, origPage })
+
+	Configure(5*time.Second, 1*time.Minute, 25)
+	if RESTTimeout != 5*time.Second {
+		t.Errorf("RESTTimeout = %v, want 5s", RESTTimeout)
+	}
+	if SubprocessTimeout != time.Minute {
+		t.Errorf("SubprocessTimeout = %v, want 1m", SubprocessTimeout)
+	}
+	if repoPageSize != 25 {
+		t.Errorf("repoPageSize = %d, want 25", repoPageSize)
+	}
+}
+
+func TestConfigureIgnoresNonPositive(t *testing.T) {
+	origREST, origSub, origPage := RESTTimeout, SubprocessTimeout, repoPageSize
+	t.Cleanup(func() { RESTTimeout, SubprocessTimeout, repoPageSize = origREST, origSub, origPage })
+
+	Configure(0, -1, 0)
+	if RESTTimeout != origREST {
+		t.Errorf("RESTTimeout changed to %v, want unchanged %v", RESTTimeout, origREST)
+	}
+	if SubprocessTimeout != origSub {
+		t.Errorf("SubprocessTimeout changed to %v, want unchanged %v", SubprocessTimeout, origSub)
+	}
+	if repoPageSize != origPage {
+		t.Errorf("repoPageSize changed to %d, want unchanged %d", repoPageSize, origPage)
+	}
+}
