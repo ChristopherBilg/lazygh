@@ -39,22 +39,27 @@ func Default() Config {
 	}}
 }
 
-// raw mirrors the on-disk YAML. Pointer fields distinguish an absent key from a
-// zero value, and durations arrive as strings so time.ParseDuration gives
-// friendly "10s"/"500ms" syntax. Unknown keys are ignored (no strict decoding)
+// rawGitHub mirrors the on-disk "github" mapping. Pointer fields distinguish an
+// absent key from a zero value, and durations arrive as strings so
+// time.ParseDuration gives friendly "10s"/"500ms" syntax.
+type rawGitHub struct {
+	RESTTimeout       *string `yaml:"rest_timeout"`
+	SubprocessTimeout *string `yaml:"subprocess_timeout"`
+	RepoPageSize      *int    `yaml:"repo_page_size"`
+}
+
+// raw mirrors the on-disk YAML. Unknown keys are ignored (no strict decoding)
 // so a config written for a newer lazygh does not break an older binary.
 type raw struct {
-	GitHub *struct {
-		RESTTimeout       *string `yaml:"rest_timeout"`
-		SubprocessTimeout *string `yaml:"subprocess_timeout"`
-		RepoPageSize      *int    `yaml:"repo_page_size"`
-	} `yaml:"github"`
+	GitHub *rawGitHub `yaml:"github"`
 }
 
 // Load reads the config file, applies defaults, validates values, and returns a
 // usable Config. It never returns an error: missing file -> defaults (debug
 // log); unreadable/malformed file -> defaults (error log); an individual invalid
-// value -> that field's default (warn log), keeping valid siblings.
+// value -> that field's default (warn log), keeping valid siblings. Unknown or
+// misspelled keys are ignored silently (not logged), since decoding is not
+// strict.
 func Load() Config {
 	cfg := Default()
 

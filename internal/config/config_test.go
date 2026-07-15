@@ -120,6 +120,22 @@ func TestLoadMalformedLogsErrorAndDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadUnreadableFileLogsErrorAndDefaults(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	buf := captureLogs(t)
+	// Put a directory where config.yml is expected so ReadFile fails (non-ENOENT).
+	if err := os.MkdirAll(filepath.Join(dir, "lazygh", "config.yml"), 0o700); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if got := Load(); got != Default() {
+		t.Fatalf("Load() = %+v, want Default() on unreadable file", got)
+	}
+	if out := buf.String(); !strings.Contains(out, "level=ERROR") || !strings.Contains(out, "cannot read file") {
+		t.Fatalf("expected an ERROR 'cannot read file' log; got: %s", out)
+	}
+}
+
 func TestLoadInvalidFieldsWarnAndDefault(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
@@ -143,5 +159,87 @@ func TestLoadInvalidFieldsWarnAndDefault(t *testing.T) {
 	}
 	if !strings.Contains(out, "repo_page_size") {
 		t.Errorf("expected a WARN for repo_page_size; got: %s", out)
+	}
+}
+
+func strPtr(s string) *string { return &s }
+func intPtr(i int) *int       { return &i }
+
+// TestApplyRawValidationBoundaries exercises applyRaw's validation guards at
+// their boundaries directly: non-positive durations and out-of-range page sizes
+// default (with a WARN naming the field), while in-range values are applied.
+func TestApplyRawValidationBoundaries(t *testing.T) {
+	def := Default()
+	tests := []struct {
+		name        string
+		in          rawGitHub
+		wantREST    time.Duration
+		wantSub     time.Duration
+		wantPage    int
+		wantWarnFor string // substring a WARN must contain; "" means no WARN expected
+	}{
+		{
+			name: "rest_timeout zero -> default + warn",
+			in:   rawGitHub{RESTTimeout: strPtr("0s")}, wantREST: def.GitHub.RESTTimeout,
+			wantSub: def.GitHub.SubprocessTimeout, wantPage: def.GitHub.RepoPageSize, wantWarnFor: "rest_timeout",
+		},
+		{
+			name: "rest_timeout negative -> default + warn",
+			in:   rawGitHub{RESTTimeout: strPtr("-5s")}, wantREST: def.GitHub.RESTTimeout,
+			wantSub: def.GitHub.SubprocessTimeout, wantPage: def.GitHub.RepoPageSize, wantWarnFor: "rest_timeout",
+		},
+		{
+			name: "rest_timeout positive -> applied",
+			in:   rawGitHub{RESTTimeout: strPtr("5s")}, wantREST: 5 * time.Second,
+			wantSub: def.GitHub.SubprocessTimeout, wantPage: def.GitHub.RepoPageSize,
+		},
+		{
+			name: "repo_page_size 0 -> default + warn",
+			in:   rawGitHub{RepoPageSize: intPtr(0)}, wantREST: def.GitHub.RESTTimeout,
+			wantSub: def.GitHub.SubprocessTimeout, wantPage: def.GitHub.RepoPageSize, wantWarnFor: "repo_page_size",
+		},
+		{
+			name: "repo_page_size 1 -> applied",
+			in:   rawGitHub{RepoPageSize: intPtr(1)}, wantREST: def.GitHub.RESTTimeout,
+			wantSub: def.GitHub.SubprocessTimeout, wantPage: 1,
+		},
+		{
+			name: "repo_page_size 100 -> applied",
+			in:   rawGitHub{RepoPageSize: intPtr(100)}, wantREST: def.GitHub.RESTTimeout,
+			wantSub: def.GitHub.SubprocessTimeout, wantPage: 100,
+		},
+		{
+			name: "repo_page_size 101 -> default + warn",
+			in:   rawGitHub{RepoPageSize: intPtr(101)}, wantREST: def.GitHub.RESTTimeout,
+			wantSub: def.GitHub.SubprocessTimeout, wantPage: def.GitHub.RepoPageSize, wantWarnFor: "repo_page_size",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			buf := captureLogs(t)
+			cfg := Default()
+			in := tt.in
+			applyRaw(&cfg, raw{GitHub: &in})
+
+			if cfg.GitHub.RESTTimeout != tt.wantREST {
+				t.Errorf("RESTTimeout = %v, want %v", cfg.GitHub.RESTTimeout, tt.wantREST)
+			}
+			if cfg.GitHub.SubprocessTimeout != tt.wantSub {
+				t.Errorf("SubprocessTimeout = %v, want %v", cfg.GitHub.SubprocessTimeout, tt.wantSub)
+			}
+			if cfg.GitHub.RepoPageSize != tt.wantPage {
+				t.Errorf("RepoPageSize = %d, want %d", cfg.GitHub.RepoPageSize, tt.wantPage)
+			}
+
+			out := buf.String()
+			if tt.wantWarnFor == "" {
+				if strings.Contains(out, "level=WARN") {
+					t.Errorf("expected no WARN log for valid value; got: %s", out)
+				}
+			} else if !strings.Contains(out, "level=WARN") || !strings.Contains(out, tt.wantWarnFor) {
+				t.Errorf("expected a WARN naming %q; got: %s", tt.wantWarnFor, out)
+			}
+		})
 	}
 }
