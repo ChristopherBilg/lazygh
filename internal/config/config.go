@@ -12,6 +12,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -20,6 +23,8 @@ import (
 // Config is the typed, validated application configuration.
 type Config struct {
 	GitHub GitHubConfig
+	Keys   KeysConfig
+	Theme  ThemeConfig
 }
 
 // GitHubConfig holds limits for outbound GitHub calls.
@@ -29,14 +34,62 @@ type GitHubConfig struct {
 	RepoPageSize      int
 }
 
+// KeysConfig holds the resolved key bindings: one non-empty []string per action.
+type KeysConfig struct {
+	Quit       []string
+	Back       []string
+	Up         []string
+	Down       []string
+	Select     []string
+	Refresh    []string
+	TogglePane []string
+	Checkout   []string
+	Open       []string
+	NavPRs     []string
+	NavIssues  []string
+	NavActions []string
+}
+
+// ThemeConfig holds the resolved, validated color per semantic role.
+type ThemeConfig struct {
+	Accent   string
+	Border   string
+	Selected string
+	Title    string
+	Error    string
+}
+
 // Default returns the documented defaults. They match the values previously
 // hardcoded in internal/github, so an absent config file changes nothing.
 func Default() Config {
-	return Config{GitHub: GitHubConfig{
-		RESTTimeout:       10 * time.Second,
-		SubprocessTimeout: 30 * time.Second,
-		RepoPageSize:      50,
-	}}
+	return Config{
+		GitHub: GitHubConfig{
+			RESTTimeout:       10 * time.Second,
+			SubprocessTimeout: 30 * time.Second,
+			RepoPageSize:      50,
+		},
+		Keys: KeysConfig{
+			Quit:       []string{"q"},
+			Back:       []string{"esc", "backspace"},
+			Up:         []string{"up", "k"},
+			Down:       []string{"down", "j"},
+			Select:     []string{"enter"},
+			Refresh:    []string{"r"},
+			TogglePane: []string{"tab", "shift+tab"},
+			Checkout:   []string{"c"},
+			Open:       []string{"o"},
+			NavPRs:     []string{"1"},
+			NavIssues:  []string{"2"},
+			NavActions: []string{"3"},
+		},
+		Theme: ThemeConfig{
+			Accent:   "62",
+			Border:   "240",
+			Selected: "212",
+			Title:    "230",
+			Error:    "196",
+		},
+	}
 }
 
 // rawGitHub mirrors the on-disk "github" mapping. Pointer fields distinguish an
@@ -48,10 +101,53 @@ type rawGitHub struct {
 	RepoPageSize      *int    `yaml:"repo_page_size"`
 }
 
+// keyList is a []string that also accepts a single YAML scalar, so both
+// `checkout: c` and `checkout: [c, x]` decode. yaml.v3 reads scalar numbers as
+// their string form (e.g. 1 -> "1"), matching bubbletea's key names.
+type keyList []string
+
+func (k *keyList) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		*k = keyList{value.Value}
+		return nil
+	}
+	var s []string
+	if err := value.Decode(&s); err != nil {
+		return err
+	}
+	*k = keyList(s)
+	return nil
+}
+
+type rawKeys struct {
+	Quit       *keyList `yaml:"quit"`
+	Back       *keyList `yaml:"back"`
+	Up         *keyList `yaml:"up"`
+	Down       *keyList `yaml:"down"`
+	Select     *keyList `yaml:"select"`
+	Refresh    *keyList `yaml:"refresh"`
+	TogglePane *keyList `yaml:"toggle_pane"`
+	Checkout   *keyList `yaml:"checkout"`
+	Open       *keyList `yaml:"open"`
+	NavPRs     *keyList `yaml:"nav_prs"`
+	NavIssues  *keyList `yaml:"nav_issues"`
+	NavActions *keyList `yaml:"nav_actions"`
+}
+
+type rawTheme struct {
+	Accent   *string `yaml:"accent"`
+	Border   *string `yaml:"border"`
+	Selected *string `yaml:"selected"`
+	Title    *string `yaml:"title"`
+	Error    *string `yaml:"error"`
+}
+
 // raw mirrors the on-disk YAML. Unknown keys are ignored (no strict decoding)
 // so a config written for a newer lazygh does not break an older binary.
 type raw struct {
 	GitHub *rawGitHub `yaml:"github"`
+	Keys   *rawKeys   `yaml:"keys"`
+	Theme  *rawTheme  `yaml:"theme"`
 }
 
 // Load reads the config file, applies defaults, validates values, and returns a
@@ -123,6 +219,25 @@ github:
   # rest_timeout: 10s        # timeout for each GitHub REST API request
   # subprocess_timeout: 30s  # timeout for each gh subprocess call
   # repo_page_size: 50       # repositories fetched for the picker (1-100)
+keys:
+  # quit: [q]                # ctrl+c always quits too
+  # back: [esc, backspace]
+  # up: [up, k]
+  # down: [down, j]
+  # select: [enter]
+  # refresh: [r]
+  # toggle_pane: [tab, shift+tab]
+  # checkout: [c]
+  # open: [o]
+  # nav_prs: ["1"]
+  # nav_issues: ["2"]
+  # nav_actions: ["3"]
+theme:
+  # accent: "62"             # active borders, title bar, boxes
+  # border: "240"            # inactive pane borders
+  # selected: "212"          # highlighted list row
+  # title: "230"             # title text
+  # error: "196"             # error text
 `
 
 // writeDefaultConfig writes defaultConfigTemplate to path, creating the parent
@@ -146,14 +261,17 @@ func writeDefaultConfig(path string) error {
 	return nil
 }
 
-// applyRaw overlays present, valid fields from r onto cfg (which starts at
-// Default()). Each invalid field is logged at WARN and left at its default.
+// applyRaw overlays present, valid fields onto cfg (which starts at Default()).
 func applyRaw(cfg *Config, r raw) {
-	if r.GitHub == nil {
+	applyGitHub(cfg, r.GitHub)
+	applyKeys(cfg, r.Keys)
+	applyTheme(cfg, r.Theme)
+}
+
+func applyGitHub(cfg *Config, g *rawGitHub) {
+	if g == nil {
 		return
 	}
-	g := r.GitHub
-
 	if g.RESTTimeout != nil {
 		if d, err := time.ParseDuration(*g.RESTTimeout); err == nil && d > 0 {
 			cfg.GitHub.RESTTimeout = d
@@ -162,7 +280,6 @@ func applyRaw(cfg *Config, r raw) {
 				"value", *g.RESTTimeout, "default", cfg.GitHub.RESTTimeout)
 		}
 	}
-
 	if g.SubprocessTimeout != nil {
 		if d, err := time.ParseDuration(*g.SubprocessTimeout); err == nil && d > 0 {
 			cfg.GitHub.SubprocessTimeout = d
@@ -171,7 +288,6 @@ func applyRaw(cfg *Config, r raw) {
 				"value", *g.SubprocessTimeout, "default", cfg.GitHub.SubprocessTimeout)
 		}
 	}
-
 	if g.RepoPageSize != nil {
 		if *g.RepoPageSize >= 1 && *g.RepoPageSize <= 100 {
 			cfg.GitHub.RepoPageSize = *g.RepoPageSize
@@ -180,4 +296,89 @@ func applyRaw(cfg *Config, r raw) {
 				"value", *g.RepoPageSize, "default", cfg.GitHub.RepoPageSize)
 		}
 	}
+}
+
+func applyKeys(cfg *Config, rk *rawKeys) {
+	if rk == nil {
+		return
+	}
+	for _, b := range []struct {
+		name string
+		raw  *keyList
+		dst  *[]string
+	}{
+		{"quit", rk.Quit, &cfg.Keys.Quit},
+		{"back", rk.Back, &cfg.Keys.Back},
+		{"up", rk.Up, &cfg.Keys.Up},
+		{"down", rk.Down, &cfg.Keys.Down},
+		{"select", rk.Select, &cfg.Keys.Select},
+		{"refresh", rk.Refresh, &cfg.Keys.Refresh},
+		{"toggle_pane", rk.TogglePane, &cfg.Keys.TogglePane},
+		{"checkout", rk.Checkout, &cfg.Keys.Checkout},
+		{"open", rk.Open, &cfg.Keys.Open},
+		{"nav_prs", rk.NavPRs, &cfg.Keys.NavPRs},
+		{"nav_issues", rk.NavIssues, &cfg.Keys.NavIssues},
+		{"nav_actions", rk.NavActions, &cfg.Keys.NavActions},
+	} {
+		if b.raw == nil {
+			continue
+		}
+		if ks, ok := sanitizeKeys(*b.raw); ok {
+			*b.dst = ks
+		} else {
+			slog.Warn("config: keys."+b.name+" has no usable keys; using default",
+				"value", []string(*b.raw), "default", *b.dst)
+		}
+	}
+}
+
+func applyTheme(cfg *Config, rt *rawTheme) {
+	if rt == nil {
+		return
+	}
+	for _, role := range []struct {
+		name string
+		raw  *string
+		dst  *string
+	}{
+		{"accent", rt.Accent, &cfg.Theme.Accent},
+		{"border", rt.Border, &cfg.Theme.Border},
+		{"selected", rt.Selected, &cfg.Theme.Selected},
+		{"title", rt.Title, &cfg.Theme.Title},
+		{"error", rt.Error, &cfg.Theme.Error},
+	} {
+		if role.raw == nil {
+			continue
+		}
+		if isValidColor(*role.raw) {
+			*role.dst = *role.raw
+		} else {
+			slog.Warn("config: theme."+role.name+" is not a valid color; using default",
+				"value", *role.raw, "default", *role.dst)
+		}
+	}
+}
+
+// sanitizeKeys trims entries and drops blanks; ok is false if none remain.
+func sanitizeKeys(in []string) (out []string, ok bool) {
+	for _, k := range in {
+		if k = strings.TrimSpace(k); k != "" {
+			out = append(out, k)
+		}
+	}
+	return out, len(out) > 0
+}
+
+// hexColor matches #RGB and #RRGGBB.
+var hexColor = regexp.MustCompile(`^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$`)
+
+// isValidColor accepts a hex string or an ANSI-256 index (0–255).
+func isValidColor(s string) bool {
+	if hexColor.MatchString(s) {
+		return true
+	}
+	if n, err := strconv.Atoi(s); err == nil && n >= 0 && n <= 255 {
+		return true
+	}
+	return false
 }

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -72,8 +73,10 @@ func TestLoadWritesDefaultConfigWhenAbsent(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", dir) // empty dir: no config.yml yet
 	path := filepath.Join(dir, "lazygh", "config.yml")
 
-	if got := Load(); got != Default() {
-		t.Fatalf("Load() = %+v, want Default() %+v", got, Default())
+	got := Load()
+	def := Default()
+	if got.GitHub != def.GitHub || !slices.Equal(got.Keys.Quit, def.Keys.Quit) {
+		t.Fatalf("Load() = %+v, want Default() %+v", got, def)
 	}
 
 	data, err := os.ReadFile(path)
@@ -84,7 +87,6 @@ func TestLoadWritesDefaultConfigWhenAbsent(t *testing.T) {
 	// Every key is commented out (so the written file is equivalent to "no file"),
 	// and each commented example shows the current default value — asserting the
 	// values guards against the template drifting from Default().
-	def := Default()
 	for _, want := range []string{
 		fmt.Sprintf("# rest_timeout: %s", def.GitHub.RESTTimeout),
 		fmt.Sprintf("# subprocess_timeout: %s", def.GitHub.SubprocessTimeout),
@@ -94,9 +96,16 @@ func TestLoadWritesDefaultConfigWhenAbsent(t *testing.T) {
 			t.Errorf("written template missing commented default %q; got:\n%s", want, content)
 		}
 	}
+	for _, want := range []string{"keys:", "# checkout: [c]", "theme:", `# accent: "62"`} {
+		if !strings.Contains(content, want) {
+			t.Errorf("written template missing %q; got:\n%s", want, content)
+		}
+	}
 	// Loading again reads the freshly written template and still yields defaults.
-	if got := Load(); got != Default() {
-		t.Fatalf("reload of written template = %+v, want Default()", got)
+	got2 := Load()
+	def2 := Default()
+	if got2.GitHub != def2.GitHub || !slices.Equal(got2.Keys.Quit, def2.Keys.Quit) {
+		t.Fatalf("reload of written template = %+v, want Default()", got2)
 	}
 }
 
@@ -136,7 +145,9 @@ func TestLoadDefaultsWhenTemplateWriteFails(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", roDir)
 	buf := captureLogs(t)
 
-	if got := Load(); got != Default() {
+	got := Load()
+	def := Default()
+	if got.GitHub != def.GitHub || !slices.Equal(got.Keys.Quit, def.Keys.Quit) {
 		t.Fatalf("Load() = %+v, want Default() when the template can't be written", got)
 	}
 	if out := buf.String(); !strings.Contains(out, "level=WARN") || !strings.Contains(out, "could not write default") {
@@ -188,7 +199,9 @@ func TestLoadMalformedLogsErrorAndDefaults(t *testing.T) {
 	// A sequence where a mapping is expected: yaml.Unmarshal into raw errors.
 	writeConfig(t, dir, "github:\n  - 1\n  - 2\n")
 
-	if got := Load(); got != Default() {
+	got := Load()
+	def := Default()
+	if got.GitHub != def.GitHub || !slices.Equal(got.Keys.Quit, def.Keys.Quit) {
 		t.Fatalf("Load() = %+v, want Default() on malformed file", got)
 	}
 	if out := buf.String(); !strings.Contains(out, "level=ERROR") || !strings.Contains(out, "malformed file") {
@@ -204,7 +217,9 @@ func TestLoadUnreadableFileLogsErrorAndDefaults(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "lazygh", "config.yml"), 0o700); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	if got := Load(); got != Default() {
+	got := Load()
+	def := Default()
+	if got.GitHub != def.GitHub || !slices.Equal(got.Keys.Quit, def.Keys.Quit) {
 		t.Fatalf("Load() = %+v, want Default() on unreadable file", got)
 	}
 	if out := buf.String(); !strings.Contains(out, "level=ERROR") || !strings.Contains(out, "cannot read file") {
@@ -238,8 +253,123 @@ func TestLoadInvalidFieldsWarnAndDefault(t *testing.T) {
 	}
 }
 
+func TestApplyKeysValidation(t *testing.T) {
+	def := Default()
+	tests := []struct {
+		name         string
+		in           rawKeys
+		wantCheckout []string
+		wantWarn     bool
+	}{
+		{"list applied", rawKeys{Checkout: keyListPtr("x", "y")}, []string{"x", "y"}, false},
+		{"single applied", rawKeys{Checkout: keyListPtr("x")}, []string{"x"}, false},
+		{"empty -> default + warn", rawKeys{Checkout: keyListPtr()}, def.Keys.Checkout, true},
+		{"all blank -> default + warn", rawKeys{Checkout: keyListPtr("  ", "")}, def.Keys.Checkout, true},
+		{"blanks dropped, rest kept", rawKeys{Checkout: keyListPtr(" x ", "", "y")}, []string{"x", "y"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			buf := captureLogs(t)
+			cfg := Default()
+			in := tt.in
+			applyRaw(&cfg, raw{Keys: &in})
+			if !slices.Equal(cfg.Keys.Checkout, tt.wantCheckout) {
+				t.Errorf("Checkout = %v, want %v", cfg.Keys.Checkout, tt.wantCheckout)
+			}
+			if gotWarn := strings.Contains(buf.String(), "level=WARN"); gotWarn != tt.wantWarn {
+				t.Errorf("warn = %v, want %v; log: %s", gotWarn, tt.wantWarn, buf.String())
+			}
+		})
+	}
+}
+
+func TestApplyThemeValidation(t *testing.T) {
+	def := Default()
+	tests := []struct {
+		name       string
+		in         rawTheme
+		wantAccent string
+		wantWarn   bool
+	}{
+		{"ansi index", rawTheme{Accent: strPtr("205")}, "205", false},
+		{"ansi 0", rawTheme{Accent: strPtr("0")}, "0", false},
+		{"ansi 255", rawTheme{Accent: strPtr("255")}, "255", false},
+		{"hex short", rawTheme{Accent: strPtr("#abc")}, "#abc", false},
+		{"hex long", rawTheme{Accent: strPtr("#7D56F4")}, "#7D56F4", false},
+		{"ansi 256 -> default", rawTheme{Accent: strPtr("256")}, def.Theme.Accent, true},
+		{"negative -> default", rawTheme{Accent: strPtr("-1")}, def.Theme.Accent, true},
+		{"bad hex -> default", rawTheme{Accent: strPtr("#zz")}, def.Theme.Accent, true},
+		{"name -> default", rawTheme{Accent: strPtr("purple")}, def.Theme.Accent, true},
+		{"empty -> default", rawTheme{Accent: strPtr("")}, def.Theme.Accent, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			buf := captureLogs(t)
+			cfg := Default()
+			in := tt.in
+			applyRaw(&cfg, raw{Theme: &in})
+			if cfg.Theme.Accent != tt.wantAccent {
+				t.Errorf("Accent = %q, want %q", cfg.Theme.Accent, tt.wantAccent)
+			}
+			if gotWarn := strings.Contains(buf.String(), "level=WARN"); gotWarn != tt.wantWarn {
+				t.Errorf("warn = %v, want %v; log: %s", gotWarn, tt.wantWarn, buf.String())
+			}
+		})
+	}
+}
+
+func TestApplyThemeValidSiblingApplies(t *testing.T) {
+	cfg := Default()
+	applyRaw(&cfg, raw{Theme: &rawTheme{Accent: strPtr("nope"), Border: strPtr("15")}})
+	if cfg.Theme.Accent != Default().Theme.Accent {
+		t.Errorf("Accent = %q, want default (invalid ignored)", cfg.Theme.Accent)
+	}
+	if cfg.Theme.Border != "15" {
+		t.Errorf("Border = %q, want 15 (valid sibling applied)", cfg.Theme.Border)
+	}
+}
+
+func TestLoadScalarAndListKeys(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	writeConfig(t, dir, "keys:\n  checkout: x\n  open: [a, b]\n")
+
+	got := Load()
+	if !slices.Equal(got.Keys.Checkout, []string{"x"}) {
+		t.Errorf("Checkout = %v, want [x] (scalar accepted)", got.Keys.Checkout)
+	}
+	if !slices.Equal(got.Keys.Open, []string{"a", "b"}) {
+		t.Errorf("Open = %v, want [a b]", got.Keys.Open)
+	}
+	if !slices.Equal(got.Keys.Refresh, Default().Keys.Refresh) {
+		t.Errorf("Refresh = %v, want default (untouched)", got.Keys.Refresh)
+	}
+}
+
+func TestLoadAppliesTheme(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	writeConfig(t, dir, "theme:\n  accent: \"205\"\n  selected: \"#ff8800\"\n")
+
+	got := Load()
+	if got.Theme.Accent != "205" {
+		t.Errorf("Accent = %q, want 205", got.Theme.Accent)
+	}
+	if got.Theme.Selected != "#ff8800" {
+		t.Errorf("Selected = %q, want #ff8800", got.Theme.Selected)
+	}
+	if got.Theme.Border != Default().Theme.Border {
+		t.Errorf("Border = %q, want default (untouched)", got.Theme.Border)
+	}
+}
+
 func strPtr(s string) *string { return &s }
 func intPtr(i int) *int       { return &i }
+
+func keyListPtr(s ...string) *keyList {
+	k := keyList(s)
+	return &k
+}
 
 // TestApplyRawValidationBoundaries exercises applyRaw's validation guards at
 // their boundaries directly: non-positive durations and out-of-range page sizes
