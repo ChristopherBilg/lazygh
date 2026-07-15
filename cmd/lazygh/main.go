@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/ChristopherBilg/lazygh/internal/config"
+	"github.com/ChristopherBilg/lazygh/internal/github"
 	"github.com/ChristopherBilg/lazygh/internal/logging"
 	"github.com/ChristopherBilg/lazygh/internal/tui"
 	tea "github.com/charmbracelet/bubbletea"
@@ -25,6 +27,11 @@ func run() int {
 		fmt.Fprintf(os.Stderr, "lazygh: logging disabled: %v\n", err)
 	}
 	defer func() { _ = closeLog() }()
+
+	// Load config after logging so config problems are logged, and apply it
+	// before the TUI starts. Load never fails; it falls back to defaults.
+	cfg := config.Load()
+	github.Configure(cfg.GitHub.RESTTimeout, cfg.GitHub.SubprocessTimeout, cfg.GitHub.RepoPageSize)
 
 	slog.Info("lazygh starting")
 	p := tea.NewProgram(tui.NewModel(), tea.WithAltScreen())
