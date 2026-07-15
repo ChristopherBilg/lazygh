@@ -45,12 +45,14 @@ github:
 lazygh never crashes on bad configuration:
 
 - **No file** → defaults are used.
-- **Unreadable or malformed file** (invalid YAML, or a value of the wrong type
-  such as `rest_timeout: 10`) → a single error is written to the log file and
-  all defaults are used.
-- **A single out-of-range or unparseable value** (e.g. `repo_page_size: 999`) →
-  that one setting falls back to its default (logged as a warning); valid
-  settings in the same file still apply.
+- **Unreadable or malformed file** (invalid YAML syntax, or a value whose type
+  can't be decoded — e.g. `github:` set to a list, or `repo_page_size: "50"` as a
+  quoted string) → a single error is written to the log file and all defaults
+  are used.
+- **A single out-of-range or unparseable value** (e.g. `repo_page_size: 999`, or a
+  bare number like `rest_timeout: 10` that is missing a duration unit) → that one
+  setting falls back to its default (logged as a warning); valid settings in the
+  same file still apply.
 
 Configuration problems are reported through the file logger, not the terminal.
 The log file is at `$XDG_STATE_HOME/lazygh/app.log` (default
