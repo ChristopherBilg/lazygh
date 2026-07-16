@@ -11,6 +11,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/ChristopherBilg/lazygh/internal/config"
+	"github.com/ChristopherBilg/lazygh/internal/tui/keys"
 	"github.com/ChristopherBilg/lazygh/internal/tui/repolist"
 	"github.com/ChristopherBilg/lazygh/internal/tui/screen"
 )
@@ -249,5 +251,29 @@ func TestFetchErrMsgLogsWarning(t *testing.T) {
 	m.Update(screen.FetchErrMsg{View: screen.ViewPR, Err: errors.New("nope")})
 	if out := buf.String(); !strings.Contains(out, "level=WARN") || !strings.Contains(out, "view fetch error") || !strings.Contains(out, "view=1") || !strings.Contains(out, "nope") {
 		t.Fatalf("expected fetch error warning log, got: %s", out)
+	}
+}
+
+func TestCtrlCAlwaysQuitsEvenWhenQuitRemapped(t *testing.T) {
+	t.Cleanup(func() { keys.Configure(config.Default().Keys) })
+	kc := config.Default().Keys
+	kc.Quit = []string{"x"} // move quit away from q
+	keys.Configure(kc)
+
+	m := NewModel()
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("ctrl+c must always quit")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatal("expected ctrl+c to produce tea.Quit")
+	}
+
+	_, cmd2 := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if cmd2 == nil {
+		t.Fatal("remapped quit key 'x' should quit")
+	}
+	if _, ok := cmd2().(tea.QuitMsg); !ok {
+		t.Fatal("expected remapped quit key to produce tea.Quit")
 	}
 }

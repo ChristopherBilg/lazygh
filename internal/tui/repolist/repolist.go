@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	ghClient "github.com/ChristopherBilg/lazygh/internal/github"
+	"github.com/ChristopherBilg/lazygh/internal/tui/keys"
 	"github.com/ChristopherBilg/lazygh/internal/tui/screen"
 	"github.com/ChristopherBilg/lazygh/internal/tui/styles"
 )
@@ -107,23 +109,23 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		m.fetchErr = msg.Err
 
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "up", "k":
+		switch {
+		case key.Matches(msg, keys.Map.Up):
 			if m.cursor > 0 {
 				m.cursor--
 			}
-		case "down", "j":
+		case key.Matches(msg, keys.Map.Down):
 			if m.cursor < len(m.repos)-1 {
 				m.cursor++
 			}
-		case "enter":
+		case key.Matches(msg, keys.Map.Select):
 			if len(m.repos) > 0 {
 				selected := m.repos[m.cursor]
 				return m, func() tea.Msg {
 					return RepoSelectedMsg{Owner: selected.Owner.Login, Name: selected.Name}
 				}
 			}
-		case "r":
+		case key.Matches(msg, keys.Map.Refresh):
 			// Manual refresh: bypass the cache, keep the current list visible.
 			wasFetching := m.loading || m.refreshing
 			m.fetchErr = nil

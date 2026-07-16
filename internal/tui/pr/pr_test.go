@@ -8,7 +8,9 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/ChristopherBilg/lazygh/internal/config"
 	ghClient "github.com/ChristopherBilg/lazygh/internal/github"
+	"github.com/ChristopherBilg/lazygh/internal/tui/keys"
 	"github.com/ChristopherBilg/lazygh/internal/tui/screen"
 )
 
@@ -354,4 +356,28 @@ func TestCheckoutCmdFailureMessage(t *testing.T) {
 	if got := string(status); !strings.Contains(got, "Checkout failed") || !strings.Contains(got, "boom") {
 		t.Fatalf("status = %q, want failure message", got)
 	}
+}
+
+func TestCheckoutRemapTakesEffect(t *testing.T) {
+	t.Cleanup(func() { keys.Configure(config.Default().Keys) })
+	kc := config.Default().Keys
+	kc.Checkout = []string{"x"}
+	keys.Configure(kc)
+
+	// Remapped key checks out.
+	m := withPRs(2)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if cmd == nil {
+		t.Fatal("expected checkout command on remapped key 'x'")
+	}
+	if got := updated.(Model).message; got != "Checking out branch..." {
+		t.Fatalf("message = %q, want checkout message", got)
+	}
+
+	// Old default key is now inert for checkout.
+	old, cmd2 := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	if got := old.(Model).message; got != "" {
+		t.Fatalf("message = %q, want empty ('c' should be inert after remap)", got)
+	}
+	_ = cmd2 // viewport may return a nil cmd; the message assertion above is the signal
 }

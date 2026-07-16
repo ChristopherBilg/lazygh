@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	ghClient "github.com/ChristopherBilg/lazygh/internal/github"
+	"github.com/ChristopherBilg/lazygh/internal/tui/keys"
 	"github.com/ChristopherBilg/lazygh/internal/tui/nav"
 	"github.com/ChristopherBilg/lazygh/internal/tui/screen"
 	"github.com/ChristopherBilg/lazygh/internal/tui/styles"
@@ -135,14 +137,14 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		return m, cmd
 
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "tab", "shift+tab":
+		switch {
+		case key.Matches(msg, keys.Map.TogglePane):
 			if m.focus == focusList {
 				m.focus = focusDetails
 			} else {
 				m.focus = focusList
 			}
-		case "up", "k":
+		case key.Matches(msg, keys.Map.Up):
 			if m.focus == focusList {
 				if m.cursor > 0 {
 					m.cursor--
@@ -152,7 +154,7 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 			} else {
 				m.viewport.ScrollUp(1)
 			}
-		case "down", "j":
+		case key.Matches(msg, keys.Map.Down):
 			if m.focus == focusList {
 				if m.cursor < len(m.ctx.PRs)-1 {
 					m.cursor++
@@ -162,17 +164,17 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 			} else {
 				m.viewport.ScrollDown(1)
 			}
-		case "c":
+		case key.Matches(msg, keys.Map.Checkout):
 			if len(m.ctx.PRs) > 0 {
 				m.message = "Checking out branch..."
 				cmds = append(cmds, checkoutCmd(m.ctx.Owner, m.ctx.Name, m.ctx.PRs[m.cursor].Number))
 			}
-		case "o":
+		case key.Matches(msg, keys.Map.Open):
 			if len(m.ctx.PRs) > 0 {
 				m.message = "Opening browser..."
 				cmds = append(cmds, openBrowserCmd(m.ctx.Owner, m.ctx.Name, m.ctx.PRs[m.cursor].Number))
 			}
-		case "r":
+		case key.Matches(msg, keys.Map.Refresh):
 			// Manual refresh: bypass the cache, keep the current PRs visible.
 			wasFetching := m.loading || m.refreshing
 			m.fetchErr = nil

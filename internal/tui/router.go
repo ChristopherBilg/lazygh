@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/ChristopherBilg/lazygh/internal/tui/action"
 	"github.com/ChristopherBilg/lazygh/internal/tui/issue"
+	"github.com/ChristopherBilg/lazygh/internal/tui/keys"
 	"github.com/ChristopherBilg/lazygh/internal/tui/pr"
 	"github.com/ChristopherBilg/lazygh/internal/tui/repolist"
 	"github.com/ChristopherBilg/lazygh/internal/tui/screen"
@@ -74,27 +76,31 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "ctrl+c", "q":
+		if msg.String() == "ctrl+c" { // safety hatch: always quits, before any configurable match
 			return m, tea.Quit
-		case "esc", "backspace":
+		}
+		switch {
+		case key.Matches(msg, keys.Map.Quit):
+			return m, tea.Quit
+		case key.Matches(msg, keys.Map.Back):
 			if m.active != viewRepoList {
 				m.active = viewRepoList
 				return m, nil
 			}
-			// already at the repo list: fall through to forward (repolist ignores esc/backspace)
-		case "1", "2", "3":
-			// Global view switch. Only meaningful once a repo is selected; on the
-			// repo list these keys are ignored (forwarded, repolist drops them).
+			// already at the repo list: fall through to forward (repolist ignores back)
+		case key.Matches(msg, keys.Map.NavPRs):
 			if m.active != viewRepoList {
-				switch msg.String() {
-				case "1":
-					m.active = viewPR
-				case "2":
-					m.active = viewIssues
-				case "3":
-					m.active = viewActions
-				}
+				m.active = viewPR
+				return m, nil
+			}
+		case key.Matches(msg, keys.Map.NavIssues):
+			if m.active != viewRepoList {
+				m.active = viewIssues
+				return m, nil
+			}
+		case key.Matches(msg, keys.Map.NavActions):
+			if m.active != viewRepoList {
+				m.active = viewActions
 				return m, nil
 			}
 		}
