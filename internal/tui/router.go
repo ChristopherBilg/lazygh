@@ -192,7 +192,7 @@ func (m Model) broadcastResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 // View renders the global error overlay, or delegates to the active screen.
 func (m Model) View() string {
 	if m.err != nil {
-		return fmt.Sprintf("\n  Error: %v\n\n  Press 'q' to quit.\n", m.err)
+		return fmt.Sprintf("\n  Error: %v\n\n  Press ctrl+c to quit.\n", m.err)
 	}
 
 	if m.active == viewRepoList {

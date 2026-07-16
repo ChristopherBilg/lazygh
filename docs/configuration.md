@@ -71,6 +71,10 @@ named keys (`enter`, `esc`, `tab`, `shift+tab`, `up`, `down`, `backspace`,
 - **Conflicts are your responsibility.** If two actions share a key, the global
   actions (quit/back/nav) win over view actions, and otherwise the first match in
   code order wins. lazygh does not warn about conflicts.
+- **On-screen hint bars show the default keys.** The footer hints and the error
+  overlay currently display the built-in keys even after you remap; they don't yet
+  reflect your bindings (a contextual help overlay is planned). Your remapped keys
+  still work — only the on-screen labels lag.
 
 ```yaml
 keys:
