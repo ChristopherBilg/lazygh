@@ -9,6 +9,8 @@ import (
 	"github.com/ChristopherBilg/lazygh/internal/github"
 	"github.com/ChristopherBilg/lazygh/internal/logging"
 	"github.com/ChristopherBilg/lazygh/internal/tui"
+	"github.com/ChristopherBilg/lazygh/internal/tui/keys"
+	"github.com/ChristopherBilg/lazygh/internal/tui/styles"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -32,6 +34,8 @@ func run() int {
 	// before the TUI starts. Load never fails; it falls back to defaults.
 	cfg := config.Load()
 	github.Configure(cfg.GitHub.RESTTimeout, cfg.GitHub.SubprocessTimeout, cfg.GitHub.RepoPageSize)
+	styles.Configure(cfg.Theme)
+	keys.Configure(cfg.Keys)
 
 	slog.Info("lazygh starting")
 	p := tea.NewProgram(tui.NewModel(), tea.WithAltScreen())
