@@ -276,4 +276,12 @@ func TestCtrlCAlwaysQuitsEvenWhenQuitRemapped(t *testing.T) {
 	if _, ok := cmd2().(tea.QuitMsg); !ok {
 		t.Fatal("expected remapped quit key to produce tea.Quit")
 	}
+
+	// The old default quit key is now inert (forwarded, not a quit).
+	_, cmdOld := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	if cmdOld != nil {
+		if _, ok := cmdOld().(tea.QuitMsg); ok {
+			t.Fatal("'q' should no longer quit after quit is remapped to 'x'")
+		}
+	}
 }

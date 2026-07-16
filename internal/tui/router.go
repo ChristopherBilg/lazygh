@@ -88,6 +88,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			// already at the repo list: fall through to forward (repolist ignores back)
+		// Global view switch, only meaningful once a repo is selected; on the repo
+		// list these keys fall out of the switch and are forwarded (repolist drops them).
 		case key.Matches(msg, keys.Map.NavPRs):
 			if m.active != viewRepoList {
 				m.active = viewPR
