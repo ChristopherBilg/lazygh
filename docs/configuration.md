@@ -48,8 +48,8 @@ their defaults. All keys are optional.
 |---|---|---|
 | `quit` | `q` (+ `ctrl+c`) | global |
 | `back` | `esc`, `backspace` | global (return to repo list) |
-| `up` | `up`, `k` | repo list, PR list |
-| `down` | `down`, `j` | repo list, PR list |
+| `up` | `up`, `k` | repo list, PR view |
+| `down` | `down`, `j` | repo list, PR view |
 | `select` | `enter` | repo list (open repo) |
 | `refresh` | `r` | repo list, PR view |
 | `toggle_pane` | `tab`, `shift+tab` | PR view (list ↔ detail focus) |
@@ -65,8 +65,9 @@ named keys (`enter`, `esc`, `tab`, `shift+tab`, `up`, `down`, `backspace`,
 
 - **`ctrl+c` always quits**, regardless of how `quit` is bound — it can't be
   remapped away, so you can never trap yourself.
-- **Quote values YAML would reinterpret** — digits (`"1"`) and anything starting
-  with `#`.
+- **Digit keys read the same quoted or not** (`nav_prs: 1` and `nav_prs: "1"` are
+  equivalent); the examples quote them just to match the generated template's
+  style.
 - **Conflicts are your responsibility.** If two actions share a key, the global
   actions (quit/back/nav) win over view actions, and otherwise the first match in
   code order wins. lazygh does not warn about conflicts.
