@@ -280,7 +280,7 @@ func (m Model) View() string {
 	}
 
 	leftPaneWidth := (m.width * 3) / 10
-	paneHeight := m.height - 7
+	paneHeight := max(m.height-7, 1)
 
 	var listStr strings.Builder
 	for i, pr := range m.ctx.PRs {

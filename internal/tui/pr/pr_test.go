@@ -16,20 +16,24 @@ import (
 	"github.com/ChristopherBilg/lazygh/internal/tui/screen"
 )
 
-// fakeBackend is a pr.Backend test double. RepoPRs/OpenPRInBrowser succeed
-// trivially; CheckoutPR returns checkoutErr so checkout result handling can be
+// fakeBackend is a pr.Backend test double. RepoPRs/OpenPRInBrowser return the
+// injected prs/prsErr/openErr (zero values mean "succeed trivially"); CheckoutPR
+// returns checkoutErr. This lets checkout/open/fetch result handling be
 // exercised without spawning `gh` or requiring a local git repository.
 type fakeBackend struct {
 	checkoutErr error
+	prs         []ghClient.PullRequest
+	prsErr      error
+	openErr     error
 }
 
-func (fakeBackend) RepoPRs(_ context.Context, owner, name string, _ bool) (ghClient.RepoContext, error) {
-	return ghClient.RepoContext{Owner: owner, Name: name}, nil
+func (f fakeBackend) RepoPRs(_ context.Context, owner, name string, _ bool) (ghClient.RepoContext, error) {
+	return ghClient.RepoContext{Owner: owner, Name: name, PRs: f.prs}, f.prsErr
 }
 
 func (f fakeBackend) CheckoutPR(_ context.Context, _, _ string, _ int) error { return f.checkoutErr }
 
-func (fakeBackend) OpenPRInBrowser(_ context.Context, _, _ string, _ int) error { return nil }
+func (f fakeBackend) OpenPRInBrowser(_ context.Context, _, _ string, _ int) error { return f.openErr }
 
 // withPRs builds a loaded PR screen with n synthetic pull requests.
 func withPRs(n int) Model {
@@ -388,6 +392,72 @@ func TestCheckoutCmdFailureMessage(t *testing.T) {
 	}
 	if got := string(status); !strings.Contains(got, "Checkout failed") || !strings.Contains(got, "boom") {
 		t.Fatalf("status = %q, want failure message", got)
+	}
+}
+
+func TestOpenBrowserCmdSuccessMessage(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40)
+	msg := m.openBrowserCmd("octocat", "hello", 9)()
+	status, ok := msg.(statusMsg)
+	if !ok {
+		t.Fatalf("expected statusMsg, got %T", msg)
+	}
+	if got := string(status); !strings.Contains(got, "Opened PR #9 in browser") {
+		t.Fatalf("status = %q, want success message", got)
+	}
+}
+
+func TestOpenBrowserCmdFailureMessage(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{openErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	msg := m.openBrowserCmd("octocat", "hello", 9)()
+	status, ok := msg.(statusMsg)
+	if !ok {
+		t.Fatalf("expected statusMsg, got %T", msg)
+	}
+	if got := string(status); !strings.Contains(got, "Open in browser failed") || !strings.Contains(got, "boom") {
+		t.Fatalf("status = %q, want failure message", got)
+	}
+}
+
+func TestFetchPRsCmdSuccessReturnsData(t *testing.T) {
+	t.Parallel()
+	prs := []ghClient.PullRequest{{Number: 1, Title: "T", State: "open"}}
+	m := New(fakeBackend{prs: prs}, "octocat", "hello", 100, 40)
+	msg := m.fetchPRsCmd("octocat", "hello", false)()
+	data, ok := msg.(prDataMsg)
+	if !ok {
+		t.Fatalf("expected prDataMsg, got %T", msg)
+	}
+	if len(data.PRs) != 1 {
+		t.Fatalf("len(PRs) = %d, want 1", len(data.PRs))
+	}
+}
+
+func TestFetchPRsCmdClientInitErrorIsFatal(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{prsErr: ghClient.ErrClientInit}, "octocat", "hello", 100, 40)
+	msg := m.fetchPRsCmd("octocat", "hello", false)()
+	errMsg, ok := msg.(screen.ErrMsg)
+	if !ok {
+		t.Fatalf("expected screen.ErrMsg, got %T", msg)
+	}
+	if !errors.Is(errMsg.Err, ghClient.ErrClientInit) {
+		t.Fatalf("err = %v, want ErrClientInit", errMsg.Err)
+	}
+}
+
+func TestFetchPRsCmdOtherErrorIsRecoverable(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{prsErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	msg := m.fetchPRsCmd("octocat", "hello", false)()
+	fetchErr, ok := msg.(screen.FetchErrMsg)
+	if !ok {
+		t.Fatalf("expected screen.FetchErrMsg, got %T", msg)
+	}
+	if fetchErr.View != screen.ViewPR {
+		t.Fatalf("View = %v, want ViewPR", fetchErr.View)
 	}
 }
 
