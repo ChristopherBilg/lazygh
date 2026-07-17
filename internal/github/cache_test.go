@@ -11,6 +11,7 @@ import (
 )
 
 func TestCacheGetMiss(t *testing.T) {
+	t.Parallel()
 	c := NewCache()
 	if _, ok := c.get("nope"); ok {
 		t.Fatal("expected miss on empty cache")
@@ -18,6 +19,7 @@ func TestCacheGetMiss(t *testing.T) {
 }
 
 func TestGetOrLoadMissThenHit(t *testing.T) {
+	t.Parallel()
 	c := NewCache()
 	var calls int
 	load := func() (int, error) {
@@ -43,6 +45,7 @@ func TestGetOrLoadMissThenHit(t *testing.T) {
 }
 
 func TestGetOrLoadForceReloads(t *testing.T) {
+	t.Parallel()
 	c := NewCache()
 	var calls int
 	load := func() (int, error) {
@@ -68,6 +71,7 @@ func TestGetOrLoadForceReloads(t *testing.T) {
 }
 
 func TestGetOrLoadErrorNotCached(t *testing.T) {
+	t.Parallel()
 	c := NewCache()
 	wantErr := errors.New("boom")
 	var calls int
@@ -88,6 +92,7 @@ func TestGetOrLoadErrorNotCached(t *testing.T) {
 }
 
 func TestGetOrLoadConcurrent(t *testing.T) {
+	t.Parallel()
 	c := NewCache()
 	load := func() (int, error) { return 7, nil }
 

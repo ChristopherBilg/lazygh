@@ -39,7 +39,7 @@ func Init() (closeFn func() error, err error) {
 		slog.SetDefault(discardLogger(level))
 		return noop, fmt.Errorf("create log dir: %w", err)
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600) // #nosec G304 -- path is the app's own XDG state path, not user-controlled input
 	if err != nil {
 		slog.SetDefault(discardLogger(level))
 		return noop, fmt.Errorf("open log file: %w", err)
