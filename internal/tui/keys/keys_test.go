@@ -42,3 +42,23 @@ func TestConfigureOverridesCheckout(t *testing.T) {
 		t.Error("after remapping to 'x', 'c' should no longer match Checkout")
 	}
 }
+
+func TestDefaultSearchBinding(t *testing.T) {
+	if !key.Matches(runeMsg('/'), Map.Search) {
+		t.Error("default Search should match '/'")
+	}
+}
+
+func TestConfigureOverridesSearch(t *testing.T) {
+	t.Cleanup(func() { Configure(config.Default().Keys) })
+	kc := config.Default().Keys
+	kc.Search = []string{"f"}
+	Configure(kc)
+
+	if !key.Matches(runeMsg('f'), Map.Search) {
+		t.Error("after Configure, Search should match 'f'")
+	}
+	if key.Matches(runeMsg('/'), Map.Search) {
+		t.Error("after remapping to 'f', '/' should no longer match Search")
+	}
+}

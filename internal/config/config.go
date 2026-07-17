@@ -45,6 +45,7 @@ type KeysConfig struct {
 	TogglePane []string
 	Checkout   []string
 	Open       []string
+	Search     []string
 	NavPRs     []string
 	NavIssues  []string
 	NavActions []string
@@ -78,6 +79,7 @@ func Default() Config {
 			TogglePane: []string{"tab", "shift+tab"},
 			Checkout:   []string{"c"},
 			Open:       []string{"o"},
+			Search:     []string{"/"},
 			NavPRs:     []string{"1"},
 			NavIssues:  []string{"2"},
 			NavActions: []string{"3"},
@@ -129,6 +131,7 @@ type rawKeys struct {
 	TogglePane *keyList `yaml:"toggle_pane"`
 	Checkout   *keyList `yaml:"checkout"`
 	Open       *keyList `yaml:"open"`
+	Search     *keyList `yaml:"search"`
 	NavPRs     *keyList `yaml:"nav_prs"`
 	NavIssues  *keyList `yaml:"nav_issues"`
 	NavActions *keyList `yaml:"nav_actions"`
@@ -229,6 +232,7 @@ keys:
   # toggle_pane: [tab, shift+tab]
   # checkout: [c]
   # open: [o]
+  # search: [/]
   # nav_prs: ["1"]
   # nav_issues: ["2"]
   # nav_actions: ["3"]
@@ -316,6 +320,7 @@ func applyKeys(cfg *Config, rk *rawKeys) {
 		{"toggle_pane", rk.TogglePane, &cfg.Keys.TogglePane},
 		{"checkout", rk.Checkout, &cfg.Keys.Checkout},
 		{"open", rk.Open, &cfg.Keys.Open},
+		{"search", rk.Search, &cfg.Keys.Search},
 		{"nav_prs", rk.NavPRs, &cfg.Keys.NavPRs},
 		{"nav_issues", rk.NavIssues, &cfg.Keys.NavIssues},
 		{"nav_actions", rk.NavActions, &cfg.Keys.NavActions},
