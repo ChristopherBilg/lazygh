@@ -23,7 +23,37 @@ func withPRs(n int) Model {
 		prs[i] = ghClient.PullRequest{Number: i + 1, Title: "Title", State: "open"}
 	}
 	m.ctx.PRs = prs
-	m.updateViewportContent()
+	m.recompute()
+	return m
+}
+
+// withTitledPRs builds a loaded PR screen with one PR per given title (numbered
+// from 1), so search/ranking behavior can be asserted.
+func withTitledPRs(titles ...string) Model {
+	m := New("octocat", "hello", 120, 40)
+	m.loading = false
+	prs := make([]ghClient.PullRequest, len(titles))
+	for i, title := range titles {
+		prs[i] = ghClient.PullRequest{Number: i + 1, Title: title, State: "open"}
+	}
+	m.ctx.PRs = prs
+	m.recompute()
+	return m
+}
+
+// enterSearch presses "/" and returns the resulting model.
+func enterSearch(t *testing.T, m Model) Model {
+	t.Helper()
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	return updated.(Model)
+}
+
+// typeRunes feeds each rune of s to the model as a key press.
+func typeRunes(m Model, s string) Model {
+	for _, r := range s {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
 	return m
 }
 
@@ -380,4 +410,138 @@ func TestCheckoutRemapTakesEffect(t *testing.T) {
 		t.Fatalf("message = %q, want empty ('c' should be inert after remap)", got)
 	}
 	_ = cmd2 // viewport may return a nil cmd; the message assertion above is the signal
+}
+
+func TestSlashEntersSearch(t *testing.T) {
+	m := enterSearch(t, withTitledPRs("Fix cache", "Add docs"))
+	if !m.searching {
+		t.Fatal("expected searching=true after '/'")
+	}
+	if !m.CapturingInput() {
+		t.Fatal("expected CapturingInput()=true while searching")
+	}
+}
+
+func TestSlashIgnoredWhenDetailFocused(t *testing.T) {
+	m := withTitledPRs("Fix cache", "Add docs")
+	m.focus = focusDetails
+	if enterSearch(t, m).searching {
+		t.Fatal("'/' must not start search when the detail pane is focused")
+	}
+}
+
+func TestTypingFiltersList(t *testing.T) {
+	m := typeRunes(enterSearch(t, withTitledPRs("Fix cache race", "Add dark mode", "Refactor cache")), "cache")
+	if m.query != "cache" {
+		t.Fatalf("query = %q, want cache", m.query)
+	}
+	if len(m.filtered) != 2 {
+		t.Fatalf("filtered len = %d, want 2", len(m.filtered))
+	}
+}
+
+func TestArrowsNavigateAndLettersTypeWhileSearching(t *testing.T) {
+	m := typeRunes(enterSearch(t, withTitledPRs("cat", "car", "cab")), "a")
+	if len(m.filtered) != 3 {
+		t.Fatalf("filtered len = %d, want 3", len(m.filtered))
+	}
+	dn, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = dn.(Model)
+	if m.cursor != 1 {
+		t.Fatalf("cursor = %d, want 1 after Down while typing", m.cursor)
+	}
+	jm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	if got := jm.(Model).query; got != "aj" {
+		t.Fatalf("query = %q, want \"aj\" (j must be typed, not navigate)", got)
+	}
+}
+
+func TestEnterCommitsFilter(t *testing.T) {
+	m := typeRunes(enterSearch(t, withTitledPRs("Fix cache", "Add docs")), "cache")
+	ent, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = ent.(Model)
+	if m.searching {
+		t.Fatal("expected searching=false after Enter")
+	}
+	if m.query != "cache" || len(m.filtered) != 1 {
+		t.Fatalf("query=%q filtered=%d, want cache/1 retained", m.query, len(m.filtered))
+	}
+	if m.CapturingInput() {
+		t.Fatal("expected CapturingInput()=false after commit")
+	}
+}
+
+func TestEscCancelsFilter(t *testing.T) {
+	m := typeRunes(enterSearch(t, withTitledPRs("Fix cache", "Add docs")), "cache")
+	esc, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = esc.(Model)
+	if m.searching {
+		t.Fatal("expected searching=false after Esc")
+	}
+	if m.query != "" || len(m.filtered) != 2 {
+		t.Fatalf("query=%q filtered=%d, want empty/2 (full list restored)", m.query, len(m.filtered))
+	}
+}
+
+func TestSelectedPRUsesFilteredIndex(t *testing.T) {
+	m := typeRunes(enterSearch(t, withTitledPRs("Add docs", "Refactor cache", "Fix tests")), "cache")
+	pr, ok := m.selectedPR()
+	if !ok || pr.Number != 2 {
+		t.Fatalf("selectedPR() = %+v ok=%v, want PR #2", pr, ok)
+	}
+}
+
+func TestCheckoutActsOnFilteredSelection(t *testing.T) {
+	m := typeRunes(enterSearch(t, withTitledPRs("Add docs", "Refactor cache", "Fix tests")), "cache")
+	ent, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = ent.(Model)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	if cmd == nil {
+		t.Fatal("expected a checkout command on the filtered selection")
+	}
+	if got := updated.(Model).message; got != "Checking out branch..." {
+		t.Fatalf("message = %q, want checkout message", got)
+	}
+}
+
+func TestCheckoutNoOpWhenFilterEmpty(t *testing.T) {
+	m := typeRunes(enterSearch(t, withTitledPRs("Add docs", "Fix tests")), "zzz")
+	ent, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = ent.(Model)
+	if _, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}}); cmd != nil {
+		t.Fatal("expected no checkout command when the filter has no matches")
+	}
+}
+
+func TestRefreshPreservesFilter(t *testing.T) {
+	m := typeRunes(enterSearch(t, withTitledPRs("Fix cache", "Add docs", "Refactor cache")), "cache")
+	ent, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = ent.(Model)
+	ctx := ghClient.RepoContext{Owner: "octocat", Name: "hello", PRs: []ghClient.PullRequest{
+		{Number: 10, Title: "cache warmup", State: "open"},
+		{Number: 11, Title: "unrelated", State: "open"},
+	}}
+	dm, _ := m.Update(prDataMsg(ctx))
+	m = dm.(Model)
+	if m.query != "cache" || len(m.filtered) != 1 {
+		t.Fatalf("query=%q filtered=%d, want cache/1 preserved across refresh", m.query, len(m.filtered))
+	}
+	if pr, ok := m.selectedPR(); !ok || pr.Number != 10 {
+		t.Fatalf("selected=%+v, want PR #10", pr)
+	}
+}
+
+func TestCursorStaysValidAsFilterShrinks(t *testing.T) {
+	m := typeRunes(enterSearch(t, withTitledPRs("cab", "cad", "cae")), "ca")
+	m.cursor = 2
+	m = typeRunes(m, "b") // query "cab" → only "cab" matches
+	if len(m.filtered) != 1 {
+		t.Fatalf("filtered len = %d, want 1", len(m.filtered))
+	}
+	if m.cursor != 0 {
+		t.Fatalf("cursor = %d, want 0 (reset/clamped as the set shrank)", m.cursor)
+	}
+	if _, ok := m.selectedPR(); !ok {
+		t.Fatal("selectedPR must stay valid after the set shrank")
+	}
 }

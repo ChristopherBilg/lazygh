@@ -8,10 +8,12 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/ChristopherBilg/lazygh/internal/fuzzy"
 	ghClient "github.com/ChristopherBilg/lazygh/internal/github"
 	"github.com/ChristopherBilg/lazygh/internal/tui/keys"
 	"github.com/ChristopherBilg/lazygh/internal/tui/nav"
@@ -36,6 +38,10 @@ type Model struct {
 	message    string
 	spinner    spinner.Model
 	viewport   viewport.Model
+	input      textinput.Model // the "/" filter field
+	searching  bool            // input focused / capturing keystrokes
+	query      string          // applied filter; "" = no filter
+	filtered   []int           // indices into ctx.PRs, in display (ranked) order
 	width      int
 	height     int
 	ready      bool
@@ -45,16 +51,104 @@ type Model struct {
 // The repository owner/name are stored immediately so the loading view can show
 // the repository name.
 func New(owner, name string, width, height int) Model {
+	ti := textinput.New()
+	ti.Prompt = "/ "
+	ti.Placeholder = "filter titles"
+	ti.CharLimit = 128
+
 	m := Model{
 		ctx:     ghClient.RepoContext{Owner: owner, Name: name},
 		focus:   focusList,
 		loading: true,
 		spinner: spinner.New(spinner.WithSpinner(spinner.Dot)),
+		input:   ti,
 		width:   width,
 		height:  height,
 	}
 	m.resizeViewport()
 	return m
+}
+
+// recompute rebuilds the filtered (visible) index list from the current query and
+// PR set, clamps the cursor into range, and refreshes the detail viewport. It is
+// the single place the visible set is derived, so filtering, refresh, and cancel
+// all stay consistent.
+func (m *Model) recompute() {
+	if m.query == "" {
+		m.filtered = make([]int, len(m.ctx.PRs))
+		for i := range m.filtered {
+			m.filtered[i] = i
+		}
+	} else {
+		titles := make([]string, len(m.ctx.PRs))
+		for i, pr := range m.ctx.PRs {
+			titles[i] = pr.Title
+		}
+		m.filtered = fuzzy.Rank(m.query, titles)
+	}
+	if m.cursor >= len(m.filtered) {
+		m.cursor = max(len(m.filtered)-1, 0)
+	}
+	m.updateViewportContent()
+	m.viewport.GotoTop()
+}
+
+// selectedPR returns the PR under the cursor within the filtered set, or false
+// when the filtered set is empty.
+func (m Model) selectedPR() (ghClient.PullRequest, bool) {
+	if len(m.filtered) == 0 {
+		return ghClient.PullRequest{}, false
+	}
+	return m.ctx.PRs[m.filtered[m.cursor]], true
+}
+
+// CapturingInput reports whether the filter field is focused and consuming keys.
+// The router consults it (via screen.InputCapturer) to suppress global keys while
+// the user is typing a filter.
+func (m Model) CapturingInput() bool { return m.searching }
+
+// updateSearch handles keys while the filter field is focused: arrow keys move the
+// selection live, Enter commits (keeps the filter, blurs the field), Esc cancels
+// (clears the filter, restores the full list), and every other key is typed into
+// the field, re-filtering on each change.
+func (m Model) updateSearch(msg tea.KeyMsg) (screen.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEnter:
+		m.searching = false
+		m.input.Blur()
+		return m, nil
+	case tea.KeyEsc:
+		m.searching = false
+		m.input.Blur()
+		m.input.Reset()
+		m.query = ""
+		m.cursor = 0
+		m.recompute()
+		return m, nil
+	case tea.KeyUp:
+		if m.cursor > 0 {
+			m.cursor--
+			m.updateViewportContent()
+			m.viewport.GotoTop()
+		}
+		return m, nil
+	case tea.KeyDown:
+		if m.cursor < len(m.filtered)-1 {
+			m.cursor++
+			m.updateViewportContent()
+			m.viewport.GotoTop()
+		}
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	if m.input.Value() != m.query {
+		m.query = m.input.Value()
+		m.cursor = 0 // best match to the top on each query change
+		m.recompute()
+	}
+	return m, cmd
 }
 
 // prDataMsg carries fetched pull-request data.
@@ -137,7 +231,17 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		return m, cmd
 
 	case tea.KeyMsg:
+		if m.searching {
+			return m.updateSearch(msg)
+		}
 		switch {
+		case key.Matches(msg, keys.Map.Search):
+			if m.focus == focusList { // only from list focus
+				m.searching = true
+				m.input.SetValue(m.query) // pre-fill so "/" re-opens to refine
+				m.input.CursorEnd()
+				cmds = append(cmds, m.input.Focus())
+			}
 		case key.Matches(msg, keys.Map.TogglePane):
 			if m.focus == focusList {
 				m.focus = focusDetails
@@ -156,7 +260,7 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 			}
 		case key.Matches(msg, keys.Map.Down):
 			if m.focus == focusList {
-				if m.cursor < len(m.ctx.PRs)-1 {
+				if m.cursor < len(m.filtered)-1 {
 					m.cursor++
 					m.updateViewportContent()
 					m.viewport.GotoTop()
@@ -165,14 +269,14 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 				m.viewport.ScrollDown(1)
 			}
 		case key.Matches(msg, keys.Map.Checkout):
-			if len(m.ctx.PRs) > 0 {
+			if pr, ok := m.selectedPR(); ok {
 				m.message = "Checking out branch..."
-				cmds = append(cmds, checkoutCmd(m.ctx.Owner, m.ctx.Name, m.ctx.PRs[m.cursor].Number))
+				cmds = append(cmds, checkoutCmd(m.ctx.Owner, m.ctx.Name, pr.Number))
 			}
 		case key.Matches(msg, keys.Map.Open):
-			if len(m.ctx.PRs) > 0 {
+			if pr, ok := m.selectedPR(); ok {
 				m.message = "Opening browser..."
-				cmds = append(cmds, openBrowserCmd(m.ctx.Owner, m.ctx.Name, m.ctx.PRs[m.cursor].Number))
+				cmds = append(cmds, openBrowserCmd(m.ctx.Owner, m.ctx.Name, pr.Number))
 			}
 		case key.Matches(msg, keys.Map.Refresh):
 			// Manual refresh: bypass the cache, keep the current PRs visible.
@@ -195,11 +299,7 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		m.loading = false
 		m.refreshing = false
 		m.fetchErr = nil
-		if m.cursor >= len(m.ctx.PRs) {
-			m.cursor = max(len(m.ctx.PRs)-1, 0)
-		}
-		m.updateViewportContent()
-		m.viewport.GotoTop()
+		m.recompute() // re-apply the active query to the new data and clamp the cursor
 
 	case screen.FetchErrMsg:
 		m.loading = false
@@ -221,6 +321,7 @@ func (m *Model) resizeViewport() {
 	footerHeight := 2
 	contentHeight := m.height - headerHeight - footerHeight
 	rightPaneWidth := (m.width * 7) / 10
+	leftPaneWidth := (m.width * 3) / 10
 
 	if !m.ready {
 		m.viewport = viewport.New(rightPaneWidth-2, contentHeight-2)
@@ -229,15 +330,24 @@ func (m *Model) resizeViewport() {
 		m.viewport.Width = rightPaneWidth - 2
 		m.viewport.Height = contentHeight - 2
 	}
+	// The filter input sits inside the left pane; size it to the inner width
+	// (minus borders and the "/ " prompt) so a long query scrolls within the box.
+	if w := leftPaneWidth - 5; w > 0 {
+		m.input.Width = w
+	}
 	m.updateViewportContent()
 }
 
 func (m *Model) updateViewportContent() {
-	if len(m.ctx.PRs) == 0 {
-		m.viewport.SetContent("No open PRs.")
+	activePR, ok := m.selectedPR()
+	if !ok {
+		if m.query != "" {
+			m.viewport.SetContent("") // the list pane shows the "no match" message (Task 5)
+		} else {
+			m.viewport.SetContent("No open PRs.")
+		}
 		return
 	}
-	activePR := m.ctx.PRs[m.cursor]
 
 	contentStyle := lipgloss.NewStyle().Width(m.viewport.Width)
 
