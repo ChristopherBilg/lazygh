@@ -539,9 +539,22 @@ func TestCursorStaysValidAsFilterShrinks(t *testing.T) {
 		t.Fatalf("filtered len = %d, want 1", len(m.filtered))
 	}
 	if m.cursor != 0 {
-		t.Fatalf("cursor = %d, want 0 (reset/clamped as the set shrank)", m.cursor)
+		t.Fatalf("cursor = %d, want 0 (reset to top on query change)", m.cursor)
 	}
 	if _, ok := m.selectedPR(); !ok {
 		t.Fatal("selectedPR must stay valid after the set shrank")
+	}
+}
+
+func TestUpArrowNavigatesWhileSearching(t *testing.T) {
+	m := typeRunes(enterSearch(t, withTitledPRs("cat", "car", "cab")), "a") // all match; cursor 0
+	dn, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = dn.(Model)
+	if m.cursor != 1 {
+		t.Fatalf("cursor = %d, want 1 after Down", m.cursor)
+	}
+	up, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if got := up.(Model).cursor; got != 0 {
+		t.Fatalf("cursor = %d, want 0 after Up", got)
 	}
 }

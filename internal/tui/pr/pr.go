@@ -308,6 +308,14 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 
 	case statusMsg:
 		m.message = string(msg)
+
+	default:
+		// Forward any other message (e.g. the textinput's cursor-blink tick) to
+		// the filter input while it is focused, so the blink loop keeps running.
+		if m.searching {
+			m.input, cmd = m.input.Update(msg)
+			cmds = append(cmds, cmd)
+		}
 	}
 
 	m.viewport, cmd = m.viewport.Update(msg)
