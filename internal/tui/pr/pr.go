@@ -236,7 +236,11 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		}
 		switch {
 		case key.Matches(msg, keys.Map.Search):
-			if m.focus == focusList { // only from list focus
+			// Only open search when the list pane is actually on screen. View()
+			// returns early while loading or on a fatal load error, so entering
+			// capture then would route keys (e.g. the "r" retry) into an invisible
+			// input.
+			if m.focus == focusList && !m.loading && !(m.fetchErr != nil && len(m.ctx.PRs) == 0) {
 				m.searching = true
 				m.input.SetValue(m.query) // pre-fill so "/" re-opens to refine
 				m.input.CursorEnd()

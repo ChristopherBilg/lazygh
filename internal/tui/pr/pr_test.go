@@ -614,3 +614,21 @@ func TestViewNarrowWidthDoesNotPanic(t *testing.T) {
 	m.resizeViewport()
 	_ = m.View() // must not panic at a narrow width
 }
+
+func TestSlashIgnoredWhileLoading(t *testing.T) {
+	m := New("octocat", "hello", 100, 40) // loading == true, no PRs
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	if updated.(Model).searching {
+		t.Fatal("'/' must not start search while the loading screen is shown")
+	}
+}
+
+func TestSlashIgnoredOnFatalErrorScreen(t *testing.T) {
+	m := New("octocat", "hello", 100, 40)
+	fe, _ := m.Update(screen.FetchErrMsg{View: screen.ViewPR, Err: errors.New("boom")})
+	m = fe.(Model) // fatal error screen: loading cleared, fetchErr set, no PRs
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	if updated.(Model).searching {
+		t.Fatal("'/' must not start search on the fatal error screen (retry key would be swallowed)")
+	}
+}
