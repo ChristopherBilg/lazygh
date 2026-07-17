@@ -9,6 +9,7 @@ import (
 	"github.com/ChristopherBilg/lazygh/internal/config"
 )
 
+// Shared lipgloss styles used across the TUI, rebuilt from the theme by Configure.
 var (
 	Base         lipgloss.Style
 	Active       lipgloss.Style

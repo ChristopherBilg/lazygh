@@ -19,9 +19,12 @@ import (
 	"github.com/ChristopherBilg/lazygh/internal/tui/styles"
 )
 
+// focus identifies which pane of the split view has keyboard focus.
+type focus int
+
 // Focus targets within the split pane.
 const (
-	focusList = iota
+	focusList focus = iota
 	focusDetails
 )
 
@@ -29,7 +32,7 @@ const (
 type Model struct {
 	ctx        ghClient.RepoContext
 	cursor     int
-	focus      int
+	focus      focus
 	loading    bool
 	refreshing bool
 	fetchErr   error

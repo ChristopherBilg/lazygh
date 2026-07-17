@@ -1,3 +1,5 @@
+// Command lazygh is a terminal UI for browsing GitHub repositories and their
+// pull requests, built on Bubble Tea.
 package main
 
 import (

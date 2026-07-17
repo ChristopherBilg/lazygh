@@ -1,3 +1,6 @@
+// Package github wraps the GitHub REST API and `gh` subprocess calls lazygh
+// needs (repository listing, pull requests, checkout, open-in-browser), with a
+// small in-memory response cache. All outbound calls are bounded by timeouts.
 package github
 
 import (
@@ -6,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -67,6 +71,7 @@ var currentRepo = repository.Current
 // tree and checking out another repository's PR there is not meaningful.
 var ErrNotLocalRepo = errors.New("selected repository is not lazygh's local repository")
 
+// Repository is a GitHub repository as returned by the REST API's repo endpoints.
 type Repository struct {
 	Name  string `json:"name"`
 	Owner struct {
@@ -76,6 +81,7 @@ type Repository struct {
 	Description string `json:"description"`
 }
 
+// PullRequest is a single pull request as returned by the REST API.
 type PullRequest struct {
 	Title  string `json:"title"`
 	Number int    `json:"number"`
@@ -83,6 +89,7 @@ type PullRequest struct {
 	Body   string `json:"body"`
 }
 
+// RepoContext pairs a repository's owner/name with its fetched pull requests.
 type RepoContext struct {
 	Owner string
 	Name  string
@@ -141,7 +148,7 @@ func FetchUserRepositories() ([]Repository, error) {
 	return repos, nil
 }
 
-// FetchRepoPRs now accepts an explicit owner and name instead of guessing the local repo.
+// FetchRepoPRs fetches the pull requests for the given owner/name.
 func FetchRepoPRs(owner, name string) (RepoContext, error) {
 	client, err := newRESTClient()
 	if err != nil {
@@ -183,7 +190,7 @@ func CheckoutPR(owner, name string, prNumber int) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), SubprocessTimeout)
 	defer cancel()
-	_, _, err = execContext(ctx, "pr", "checkout", fmt.Sprintf("%d", prNumber), "--repo", repo)
+	_, _, err = execContext(ctx, "pr", "checkout", strconv.Itoa(prNumber), "--repo", repo)
 	if err != nil {
 		slog.Warn("checkout failed", "repo", repo, "pr", prNumber, "err", err)
 		return err
@@ -199,7 +206,7 @@ func OpenPRInBrowser(owner, name string, prNumber int) error {
 	ctx, cancel := context.WithTimeout(context.Background(), SubprocessTimeout)
 	defer cancel()
 	repo := fmt.Sprintf("%s/%s", owner, name)
-	_, _, err := execContext(ctx, "pr", "view", fmt.Sprintf("%d", prNumber), "--repo", repo, "--web")
+	_, _, err := execContext(ctx, "pr", "view", strconv.Itoa(prNumber), "--repo", repo, "--web")
 	if err != nil {
 		slog.Warn("open in browser failed", "repo", repo, "pr", prNumber, "err", err)
 		return err
