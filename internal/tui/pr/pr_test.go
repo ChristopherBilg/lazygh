@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -380,4 +381,34 @@ func TestCheckoutRemapTakesEffect(t *testing.T) {
 		t.Fatalf("message = %q, want empty ('c' should be inert after remap)", got)
 	}
 	_ = cmd2 // viewport may return a nil cmd; the message assertion above is the signal
+}
+
+func TestViewNeverPanicsOnNarrowWidths(t *testing.T) {
+	t.Parallel()
+	for w := 1; w <= 40; w++ {
+		m := withPRs(3)
+		m.width = w
+		m.height = 24
+		m.resizeViewport()
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("width=%d: View panicked: %v", w, r)
+				}
+			}()
+			_ = m.View()
+		}()
+	}
+}
+
+func TestViewTruncatesWideRuneTitleByDisplayWidth(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.width = 60
+	m.ctx.PRs[0].Title = strings.Repeat("世", 100) // each rune is 2 display cells
+	m.updateViewportContent()
+	v := m.View() // must not panic
+	if !utf8.ValidString(v) {
+		t.Fatal("View produced invalid UTF-8 (a multibyte rune was split)")
+	}
 }

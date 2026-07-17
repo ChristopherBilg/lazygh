@@ -219,15 +219,17 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 func (m *Model) resizeViewport() {
 	headerHeight := 5 // +1 for the nav.Bar line above the repo header
 	footerHeight := 2
-	contentHeight := m.height - headerHeight - footerHeight
+	contentHeight := max(m.height-headerHeight-footerHeight, 1)
 	rightPaneWidth := (m.width * 7) / 10
+	vpWidth := max(rightPaneWidth-2, 1)
+	vpHeight := max(contentHeight-2, 1)
 
 	if !m.ready {
-		m.viewport = viewport.New(rightPaneWidth-2, contentHeight-2)
+		m.viewport = viewport.New(vpWidth, vpHeight)
 		m.ready = true
 	} else {
-		m.viewport.Width = rightPaneWidth - 2
-		m.viewport.Height = contentHeight - 2
+		m.viewport.Width = vpWidth
+		m.viewport.Height = vpHeight
 	}
 	m.updateViewportContent()
 }
@@ -271,11 +273,9 @@ func (m Model) View() string {
 	var listStr strings.Builder
 	for i, pr := range m.ctx.PRs {
 		cursorStr := "  "
-		title := fmt.Sprintf("#%d %s", pr.Number, pr.Title)
-
-		if len(title) > leftPaneWidth-6 {
-			title = title[:leftPaneWidth-9] + "..."
-		}
+		// Reserve 2 columns for the cursor prefix so the title never overflows the
+		// pane. TruncateEllipsis is width-aware and never panics on narrow widths.
+		title := styles.TruncateEllipsis(fmt.Sprintf("#%d %s", pr.Number, pr.Title), leftPaneWidth-2)
 
 		if m.cursor == i {
 			cursorStr = "> "

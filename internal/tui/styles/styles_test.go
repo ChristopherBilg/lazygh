@@ -33,6 +33,29 @@ func TestTruncateNonPositiveWidthUnchanged(t *testing.T) {
 	}
 }
 
+func TestTruncateEllipsis(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		in    string
+		width int
+		want  string
+	}{
+		{"fits unchanged", "hello", 10, "hello"},
+		{"truncates with ellipsis", "hello world", 5, "hell…"},
+		{"zero width empty", "hello", 0, ""},
+		{"negative width empty", "hello", -3, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := TruncateEllipsis(tt.in, tt.width); got != tt.want {
+				t.Fatalf("TruncateEllipsis(%q, %d) = %q, want %q", tt.in, tt.width, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestConfigureAppliesTheme(t *testing.T) {
 	t.Cleanup(func() { Configure(config.Default().Theme) })
 	Configure(config.ThemeConfig{
