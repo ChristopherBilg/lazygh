@@ -421,7 +421,7 @@ func (m Model) renderList(paneWidth int) string {
 
 	if len(m.filtered) == 0 {
 		if m.query != "" {
-			fmt.Fprintf(&b, "No PRs match %q.", m.query)
+			b.WriteString(styles.Truncate(fmt.Sprintf("No PRs match %q.", m.query), paneWidth-2))
 		} else {
 			b.WriteString("No open PRs.")
 		}
@@ -432,7 +432,7 @@ func (m Model) renderList(paneWidth int) string {
 		pr := m.ctx.PRs[idx]
 		cursorStr := "  "
 		title := fmt.Sprintf("#%d %s", pr.Number, pr.Title)
-		if len(title) > paneWidth-6 {
+		if len(title) > paneWidth-6 && paneWidth-9 > 0 {
 			title = title[:paneWidth-9] + "..."
 		}
 		if m.cursor == row {

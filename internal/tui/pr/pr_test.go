@@ -594,3 +594,23 @@ func TestViewFooterHasSearchHint(t *testing.T) {
 		t.Fatalf("expected [/] Search hint in footer, got:\n%s", v)
 	}
 }
+
+func TestViewCommittedZeroMatchesShowsBadgeAndNoResults(t *testing.T) {
+	m := typeRunes(enterSearch(t, withTitledPRs("Fix cache", "Add docs")), "zzz")
+	ent, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	v := ent.(Model).View()
+	if !strings.Contains(v, `filter: "zzz" (0/2)`) {
+		t.Fatalf("expected badge with 0/2, got:\n%s", v)
+	}
+	if !strings.Contains(v, "No PRs match") {
+		t.Fatalf("expected no-results message with badge, got:\n%s", v)
+	}
+}
+
+func TestViewNarrowWidthDoesNotPanic(t *testing.T) {
+	m := withTitledPRs("A really long pull request title that exceeds the pane", "Another")
+	m.width = 20
+	m.height = 24
+	m.resizeViewport()
+	_ = m.View() // must not panic at a narrow width
+}
