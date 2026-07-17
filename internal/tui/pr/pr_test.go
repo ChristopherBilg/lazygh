@@ -558,3 +558,39 @@ func TestUpArrowNavigatesWhileSearching(t *testing.T) {
 		t.Fatalf("cursor = %d, want 0 after Up", got)
 	}
 }
+
+func TestViewSearchingShowsHintsAndQuery(t *testing.T) {
+	m := typeRunes(enterSearch(t, withTitledPRs("Fix cache", "Add docs")), "cache")
+	v := m.View()
+	if !strings.Contains(v, "cache") {
+		t.Fatalf("expected the typed query in the view:\n%s", v)
+	}
+	if !strings.Contains(v, "Cancel") || !strings.Contains(v, "Apply") {
+		t.Fatalf("expected search footer hints while typing:\n%s", v)
+	}
+}
+
+func TestViewCommittedShowsFilterBadge(t *testing.T) {
+	m := typeRunes(enterSearch(t, withTitledPRs("Fix cache", "Add docs")), "cache")
+	ent, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	v := ent.(Model).View()
+	if !strings.Contains(v, `filter: "cache"`) {
+		t.Fatalf("expected filter badge, got:\n%s", v)
+	}
+	if !strings.Contains(v, "(1/2)") {
+		t.Fatalf("expected filter count (1/2), got:\n%s", v)
+	}
+}
+
+func TestViewNoResultsMessage(t *testing.T) {
+	m := typeRunes(enterSearch(t, withTitledPRs("Fix cache", "Add docs")), "zzzzz")
+	if v := m.View(); !strings.Contains(v, "No PRs match") {
+		t.Fatalf("expected a no-results message, got:\n%s", v)
+	}
+}
+
+func TestViewFooterHasSearchHint(t *testing.T) {
+	if v := withTitledPRs("Fix cache", "Add docs").View(); !strings.Contains(v, "[/] Search") {
+		t.Fatalf("expected [/] Search hint in footer, got:\n%s", v)
+	}
+}

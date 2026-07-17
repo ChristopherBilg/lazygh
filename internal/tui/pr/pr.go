@@ -386,22 +386,6 @@ func (m Model) View() string {
 	leftPaneWidth := (m.width * 3) / 10
 	paneHeight := m.height - 7
 
-	var listStr strings.Builder
-	for i, pr := range m.ctx.PRs {
-		cursorStr := "  "
-		title := fmt.Sprintf("#%d %s", pr.Number, pr.Title)
-
-		if len(title) > leftPaneWidth-6 {
-			title = title[:leftPaneWidth-9] + "..."
-		}
-
-		if m.cursor == i {
-			cursorStr = "> "
-			title = styles.SelectedItem.Render(title)
-		}
-		fmt.Fprintf(&listStr, "%s%s\n", cursorStr, title)
-	}
-
 	var listBorder, detailBorder lipgloss.Style
 	if m.focus == focusList {
 		listBorder = styles.Active
@@ -411,18 +395,66 @@ func (m Model) View() string {
 		detailBorder = styles.Active
 	}
 
-	left := listBorder.Width(leftPaneWidth).Height(paneHeight).Render(listStr.String())
+	left := listBorder.Width(leftPaneWidth).Height(paneHeight).Render(m.renderList(leftPaneWidth))
 	right := detailBorder.Width(m.viewport.Width + 2).Height(paneHeight).Render(m.viewport.View())
 
 	header := fmt.Sprintf("%s\n Lazy GitHub | %s/%s \n\n", nav.Bar(nav.TabPRs), m.ctx.Owner, m.ctx.Name)
 	ui := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 
-	footerText := " [1/2/3] Views  •  [esc] Repo  •  [tab] Focus  •  [j/k] Scroll  •  [c] Checkout  •  [o] Web  •  [r] Refresh  •  [q] Quit"
+	return header + ui + "\n\n" + m.footer()
+}
+
+// renderList renders the left-pane contents: an optional search input or filter
+// badge, then the filtered PR rows (or a no-results message).
+func (m Model) renderList(paneWidth int) string {
+	var b strings.Builder
+
+	switch {
+	case m.searching:
+		b.WriteString(m.input.View())
+		b.WriteString("\n")
+	case m.query != "":
+		badge := fmt.Sprintf("filter: %q (%d/%d)", m.query, len(m.filtered), len(m.ctx.PRs))
+		b.WriteString(styles.Title.Render(styles.Truncate(badge, paneWidth-4)))
+		b.WriteString("\n")
+	}
+
+	if len(m.filtered) == 0 {
+		if m.query != "" {
+			fmt.Fprintf(&b, "No PRs match %q.", m.query)
+		} else {
+			b.WriteString("No open PRs.")
+		}
+		return b.String()
+	}
+
+	for row, idx := range m.filtered {
+		pr := m.ctx.PRs[idx]
+		cursorStr := "  "
+		title := fmt.Sprintf("#%d %s", pr.Number, pr.Title)
+		if len(title) > paneWidth-6 {
+			title = title[:paneWidth-9] + "..."
+		}
+		if m.cursor == row {
+			cursorStr = "> "
+			title = styles.SelectedItem.Render(title)
+		}
+		fmt.Fprintf(&b, "%s%s\n", cursorStr, title)
+	}
+	return b.String()
+}
+
+// footer renders the hint bar for the current state: search hints while typing,
+// otherwise the normal action hints (with any transient status prefixed).
+func (m Model) footer() string {
+	if m.searching {
+		return fmt.Sprintf(" Search: %s  •  [esc] Cancel  •  [enter] Apply  •  [↑/↓] Move", m.query)
+	}
+	footerText := " [1/2/3] Views  •  [esc] Repo  •  [tab] Focus  •  [j/k] Scroll  •  [/] Search  •  [c] Checkout  •  [o] Web  •  [r] Refresh  •  [q] Quit"
 	if status := m.statusLine(); status != "" {
 		footerText = fmt.Sprintf(" %s | %s", status, footerText)
 	}
-
-	return header + ui + "\n\n" + footerText
+	return footerText
 }
 
 // statusLine renders the highest-priority transient status: a refresh spinner, a
