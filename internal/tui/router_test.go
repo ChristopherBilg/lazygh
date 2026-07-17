@@ -285,3 +285,67 @@ func TestCtrlCAlwaysQuitsEvenWhenQuitRemapped(t *testing.T) {
 		}
 	}
 }
+
+// capturingScreen is a screen.Model test double whose CapturingInput value is
+// controllable, used to prove the router suppresses global keys while a screen is
+// capturing text input.
+type capturingScreen struct {
+	capturing bool
+	got       []string
+}
+
+func (c *capturingScreen) Init() tea.Cmd { return nil }
+func (c *capturingScreen) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
+	if k, ok := msg.(tea.KeyMsg); ok {
+		c.got = append(c.got, k.String())
+	}
+	return c, nil
+}
+func (c *capturingScreen) View() string         { return "" }
+func (c *capturingScreen) CapturingInput() bool { return c.capturing }
+
+func TestCapturingScreenSuppressesGlobalKeys(t *testing.T) {
+	cs := &capturingScreen{capturing: true}
+	m := Model{active: viewPR, perRepo: map[view]screen.Model{viewPR: cs}}
+
+	// "1" would normally switch views; while capturing it must be forwarded.
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	if updated.(Model).active != viewPR {
+		t.Fatal("global nav must be suppressed while capturing")
+	}
+	// "q" would normally quit; while capturing it must not.
+	if _, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}}); cmd != nil {
+		if _, ok := cmd().(tea.QuitMsg); ok {
+			t.Fatal("'q' must not quit while capturing input")
+		}
+	}
+	// esc would normally go back; while capturing it must not.
+	back, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if back.(Model).active != viewPR {
+		t.Fatal("esc must not navigate back while capturing input")
+	}
+	if len(cs.got) != 3 {
+		t.Fatalf("screen received %d keys, want 3 (all forwarded)", len(cs.got))
+	}
+}
+
+func TestCtrlCQuitsEvenWhileCapturing(t *testing.T) {
+	cs := &capturingScreen{capturing: true}
+	m := Model{active: viewPR, perRepo: map[view]screen.Model{viewPR: cs}}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("ctrl+c must quit even while capturing")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatal("expected ctrl+c to produce tea.Quit while capturing")
+	}
+}
+
+func TestGlobalKeysWorkWhenNotCapturing(t *testing.T) {
+	cs := &capturingScreen{capturing: false}
+	m := Model{active: viewPR, perRepo: map[view]screen.Model{viewPR: cs, viewIssues: &recorderScreen{}}}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	if updated.(Model).active != viewIssues {
+		t.Fatal("expected '2' to switch to Issues when not capturing")
+	}
+}
