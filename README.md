@@ -1,96 +1,146 @@
-# Lazy GitHub (lazygh) - Architectural Roadmap
+# lazygh
 
-This document outlines the epics and work items required to build `lazygh` into a production-grade, extensible terminal UI application.
+> A lazygit-style terminal UI for GitHub, in your terminal.
 
-> **Configuration:** lazygh reads an optional YAML config file at `~/.config/lazygh/config.yml` — network limits, keybindings, and the color theme are all configurable. See [docs/configuration.md](docs/configuration.md).
+[![CI](https://github.com/ChristopherBilg/lazygh/actions/workflows/ci.yml/badge.svg)](https://github.com/ChristopherBilg/lazygh/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)](go.mod)
 
-## Epic 0: Repository Foundations & Project Hygiene
-Before writing feature code, establish the baseline scaffolding, quality gates, and contributor-facing files that every production repository needs.
+**lazygh** ("Lazy GitHub") is a keyboard-driven terminal UI for working with GitHub, inspired by [lazygit](https://github.com/jesseduffield/lazygit). It's built on the [Charm](https://charm.sh) stack ([Bubble Tea](https://github.com/charmbracelet/bubbletea), Bubbles, and Lip Gloss) and reuses the GitHub CLI's credentials through [`go-gh`](https://github.com/cli/go-gh), so there's no separate login to manage.
 
-* **Continuous Integration Quality Gate:**
-    * Add a GitHub Actions workflow (`.github/workflows/ci.yml`) triggered on every pull request and push to `main`.
-    * Run `go build ./...`, `go test ./...`, `go vet ./...`, and `golangci-lint run` as required status checks.
-    * Cache Go modules to keep runs fast; pin action versions (SHA) for reproducibility.
-    * Enforce `gofmt`/`goimports` formatting so style is verified automatically.
-* **Community Health & Governance Files:**
-    * Add an OSI-approved `LICENSE` (MIT) so usage terms are unambiguous.
-    * Write `CONTRIBUTING.md` covering local setup, branch/PR conventions, and how to run tests and lint locally.
-    * Add `CODE_OF_CONDUCT.md` (Contributor Covenant) to set community expectations.
-    * Add `SECURITY.md` describing supported versions and the private vulnerability-disclosure process.
-* **GitHub Templates & Review Routing:**
-    * Add issue templates under `.github/ISSUE_TEMPLATE/` for bug reports and feature requests, plus a `config.yml` to route questions elsewhere.
-    * Add `.github/PULL_REQUEST_TEMPLATE.md` with a checklist (tests pass, lint clean, docs updated).
-    * Add `.github/CODEOWNERS` so reviews are auto-requested from the right owners.
-* **Developer Tooling & Repo Hygiene:**
-    * Add a Go `.gitignore` (compiled binaries, build output, editor/OS cruft, local `.local/state/lazygh` logs).
-    * Add `.editorconfig` to standardize indentation and line endings across editors.
-    * Add `.golangci.yml` pinning the linter set and rules that CI enforces.
-    * Add a `Makefile` exposing common targets: `build`, `test`, `lint`, `run`, `fmt`.
-    * Extend Dependabot (already covering Go modules via `.github/dependabot.yml`) to also update GitHub Actions and group minor/patch bumps.
+> **Project status:** lazygh is early and under active development. Browsing repositories and pull requests works today; the Issues and Actions tabs are navigable placeholders for now. See the [architectural roadmap](ARCHITECTURE_ROADMAP.md) for the full plan.
 
-## Epic 1: Architectural Foundations & State Management
-Before adding new GitHub features, the core application skeleton must be refactored to support multiple contexts (PRs, Issues, Actions) without blocking the UI.
+## Features
 
-* **Sub-Model Routing (The Elm Architecture):**
-    * Refactor the root `Model` to act as a router (handling state transitions like `stateRepoSelection` and `statePRView`). 
-    * Extract the current PR logic into a dedicated `pr.Model` (implementing `Init`, `Update`, `View`).
-    * Create placeholders for `issue.Model` and `action.Model`.
-    * Implement global navigation (e.g., `1`, `2`, `3` to switch between PRs, Issues, Actions).
-* **Asynchronous Data Layer & Caching:**
-    * Implement an in-memory cache for API responses to prevent re-fetching data when switching between tabs or returning from a sub-view.
-    * Introduce `bubbles/spinner` or a progress indicator for non-blocking background refreshes.
-    * Ensure all `tea.Cmd` network requests handle timeouts gracefully.
-* **TUI-Safe Logging System:**
-    * Standard `fmt.Println` or `log.Fatal` destroys the TUI layout. Implement a hidden file-logger (using Go 1.21's `slog` or Uber's `zap`).
-    * Route all debug information, API limits, and errors to `.local/state/lazygh/app.log`.
-* **Configuration & Theming Management:**
-    * Introduce a configuration parser (e.g., `viper`) to read a `~/.config/lazygh/config.yml` file.
-    * Allow users to override default keybindings (e.g., changing checkout from `c` to `enter`).
-    * Allow custom color palettes for `lipgloss` styles (overriding the default purple/blue).
+- ✅ **Repository picker** — jump into any of your most recently pushed repositories
+- ✅ **Pull-request browsing** — a split-pane list + detail view of a repo's open PRs
+- ✅ **PR actions** — check a PR out locally (`c`) or open it in your browser (`o`)
+- ✅ **Fuzzy PR search** (`/`) — filter the pull-request list by title as you type
+- ✅ **Refresh with in-memory caching** (`r`) — switching tabs and going back never re-fetches unnecessarily
+- ✅ **Fully configurable** — remap every keybinding, recolor the theme, and tune network timeouts from one optional YAML file
+- ✅ **TUI-safe logging** — diagnostics go to a log file, never to the screen, so the interface is never corrupted
+- 🚧 **Issues & Actions tabs** — navigable placeholders today; full functionality is on the roadmap
 
-## Epic 2: The Core Experience (Pull Requests)
-Elevating the current PR implementation from a read-only list to a full workflow replacement.
+## Requirements
 
-* **Advanced Filtering & Sorting:**
-    * Integrate `bubbles/textinput` to allow pressing `/` to fuzzy-search PR titles. ✅ (#13)
-    * Add filters for "My PRs," "Needs my Review," and "Dependabot."
-* **Interactive Review Workflow:**
-    * Implement a new right-pane tab view: toggle between "Description", "Files Changed" (diff view), and "Comments."
-    * Add a keybinding (e.g., `v`) to execute `gh pr diff` and render the syntax-highlighted diff in the viewport using a library like `alecthomas/chroma`.
-    * Add quick actions: `a` (Approve), `m` (Merge), `d` (Draft/Close).
-* **CI/CD Status Integration:**
-    * Update the PR list to visually indicate the GitHub Actions status (✅ Pass, ❌ Fail, 🔄 Pending) directly in the left list pane.
+- **[Go](https://go.dev/dl/) 1.25 or newer** — to install or build from source.
+- **The [GitHub CLI](https://cli.github.com/) (`gh`)** — installed and authenticated. lazygh reads `gh`'s stored token and host, so run `gh auth login` once and you're set; there is no separate lazygh login.
 
-## Epic 3: Expanding the Domain (Issues & Actions)
-Bringing the rest of the daily GitHub workflow into the terminal.
+## Installation
 
-* **Issue Management (`issue.Model`):**
-    * Fetch and list open issues for the repository.
-    * Render issue descriptions and comment threads in the viewport.
-    * Keybindings for quick assignment (assign to self) and state changes (close issue).
-* **GitHub Actions Monitor (`action.Model`):**
-    * List recent workflow runs for the current repository.
-    * Allow users to select a failed run and view the failure logs in the right viewport.
-    * Add a keybinding (e.g., `r`) to re-run a failed workflow.
+Install the latest release with Go:
 
-## Epic 4: UX Polish & Accessibility
-Ensuring the tool feels exactly like `lazygit` and is immediately intuitive to new users.
+```sh
+go install github.com/ChristopherBilg/lazygh/cmd/lazygh@latest
+```
 
-* **Dynamic Help Overlay:**
-    * Implement `bubbles/help`.
-    * Map `?` to trigger a modal overlay that displays all available keybindings contextually (e.g., showing PR-specific keys only when the PR pane is active).
-* **Global Status Bar:**
-    * Pin a robust status bar to the bottom of the screen.
-    * Display current repository, active branch, GitHub API rate limit status, and application version.
-* **Graceful Degradation:**
-    * Handle window resizing events (`tea.WindowSizeMsg`) more robustly, hiding the right pane entirely if the terminal drops below a certain width (e.g., `< 80 cols`).
+This drops a `lazygh` binary in `$(go env GOPATH)/bin` — make sure that directory is on your `PATH`.
 
-## Epic 5: CI/CD & Distribution
-Getting the tool out of your local environment and into the hands of other engineers.
+Or build from source:
 
-* **Testing Suite:**
-    * Write table-driven unit tests for the Bubble Tea `Update` functions (testing state changes based on simulated `tea.KeyMsg` inputs).
-    * Mock the `go-gh` API responses to test UI rendering without hitting live endpoints.
-* **Automated Release Pipeline:**
-    * Reuse the CI quality gate from Epic 0 as a required check, then trigger the release workflow on version tags (`v*`).
-    * Integrate `goreleaser` to automatically compile binaries for macOS, Linux, and Windows, generate a GitHub Release, and publish to a Homebrew tap on git tags.
+```sh
+git clone https://github.com/ChristopherBilg/lazygh.git
+cd lazygh
+make build        # compiles ./bin/lazygh
+```
+
+You can also run it straight from a source checkout without building a binary:
+
+```sh
+make run          # go run ./cmd/lazygh
+```
+
+## Usage
+
+1. **Authenticate once** (if you haven't already):
+
+   ```sh
+   gh auth login
+   ```
+
+2. **Start lazygh:**
+
+   ```sh
+   lazygh            # or `make run` from a source checkout
+   ```
+
+3. **Pick a repository** from your most recently pushed repos, then browse its open pull requests. Use `tab` to move focus to the detail pane, `c` to check a PR out locally, or `o` to open it in your browser.
+
+> **Note:** Checking out a PR (`c`) runs `gh pr checkout` in your current working directory, so it only works when you launch lazygh from inside a local clone of the selected repository. Everything else works from anywhere.
+
+### Keybindings
+
+These are the defaults; every action can be remapped via configuration (see below).
+
+**Global**
+
+| Key | Action |
+|---|---|
+| `1` / `2` / `3` | Switch to Pull Requests / Issues / Actions (once a repo is selected) |
+| `esc`, `backspace` | Back to the repository list |
+| `q`, `ctrl+c` | Quit (`ctrl+c` always quits and can't be remapped away) |
+
+**Repository list**
+
+| Key | Action |
+|---|---|
+| `↑`/`k`, `↓`/`j` | Move the selection |
+| `enter` | Open the selected repository |
+| `r` | Refresh the repository list |
+
+**Pull requests**
+
+| Key | Action |
+|---|---|
+| `↑`/`k`, `↓`/`j` | Move the selection |
+| `/` | Fuzzy-filter the list by PR title (`esc` cancels, `enter` keeps the filter) |
+| `tab`, `shift+tab` | Toggle focus between the list and the detail pane |
+| `c` | Check out the selected PR locally |
+| `o` | Open the selected PR in your browser |
+| `r` | Refresh the pull-request list |
+
+## Configuration
+
+lazygh runs with sensible defaults and **needs no configuration**. To customize it, edit the optional YAML file at:
+
+```
+$XDG_CONFIG_HOME/lazygh/config.yml     # or ~/.config/lazygh/config.yml
+```
+
+On first run lazygh writes a fully-commented template there, so it's easy to find and edit. Every key is optional — uncomment one to override its default. You can configure:
+
+- **GitHub limits** — per-request REST timeout, `gh` subprocess timeout, and how many repositories the picker fetches.
+- **Keybindings** — remap any action to a single key or a list of keys.
+- **Theme** — override the accent, border, selected-row, title, and error colors (hex or ANSI-256).
+
+Bad configuration never crashes lazygh: invalid values fall back to their defaults and are noted in the log. The log file lives at `$XDG_STATE_HOME/lazygh/app.log` (default `~/.local/state/lazygh/app.log`); set `LAZYGH_LOG_LEVEL=debug` for more detail.
+
+See **[docs/configuration.md](docs/configuration.md)** for the full reference and examples.
+
+## Architecture
+
+lazygh follows the Elm Architecture that Bubble Tea is built around: each screen is a self-contained model with `Init`, `Update`, and `View`. A root **router** (`internal/tui`) owns the active screen and switches between the repository picker and the per-repo screens (pull requests, issues, actions), keeping each one alive so its selection and scroll position persist as you navigate.
+
+GitHub access is isolated in `internal/github`: REST calls (`go-gh`) fetch lists like repositories and PRs, while `gh` subprocesses drive actions like checkout and open-in-browser — each bounded by a configurable timeout and cached in memory. Logging is file-only (`log/slog`) so diagnostics never corrupt the terminal UI.
+
+For the full architectural plan and the roadmap of upcoming work, see **[ARCHITECTURE_ROADMAP.md](ARCHITECTURE_ROADMAP.md)**.
+
+## Contributing
+
+Contributions are welcome! See **[CONTRIBUTING.md](CONTRIBUTING.md)** for local setup and conventions. The common development tasks are exposed through the `Makefile`:
+
+| Command | What it does |
+|---|---|
+| `make build` | Compile the binary to `./bin/lazygh` |
+| `make run` | Run the app without building a binary |
+| `make test` | Run the test suite (`go test ./...`) |
+| `make vet` | Run `go vet ./...` |
+| `make lint` | Run `golangci-lint run` |
+| `make fmt` | Format the code (`golangci-lint fmt`) |
+| `make tidy` | Tidy `go.mod` / `go.sum` |
+
+Please also review our [Code of Conduct](CODE_OF_CONDUCT.md) and [Security Policy](SECURITY.md).
+
+## License
+
+lazygh is released under the [MIT License](LICENSE).
