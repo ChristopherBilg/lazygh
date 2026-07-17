@@ -55,6 +55,7 @@ their defaults. All keys are optional.
 | `toggle_pane` | `tab`, `shift+tab` | PR view (list ↔ detail focus) |
 | `checkout` | `c` | PR view |
 | `open` | `o` | PR view (open in browser) |
+| `search` | `/` | PR view (fuzzy-filter titles) |
 | `nav_prs` | `1` | global (after a repo is selected) |
 | `nav_issues` | `2` | global |
 | `nav_actions` | `3` | global |
@@ -116,7 +117,7 @@ github:
   repo_page_size: 50       # repositories fetched for the picker (1–100)
 keys:
   checkout: [c, x]         # remap / add keys; single key or a list
-  # ...any of: quit, back, up, down, select, refresh, toggle_pane, open, nav_prs, nav_issues, nav_actions
+  # ...any of: quit, back, up, down, select, refresh, toggle_pane, open, search, nav_prs, nav_issues, nav_actions
 theme:
   accent: "205"            # ANSI-256 index or quoted hex like "#7D56F4"
   selected: "#ff8800"
