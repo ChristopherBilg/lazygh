@@ -69,7 +69,7 @@ func TestCheckoutPRAppliesDeadline(t *testing.T) {
 		return bytes.Buffer{}, bytes.Buffer{}, nil
 	}
 
-	if err := CheckoutPR("octocat", "hello", 7); err != nil {
+	if err := CheckoutPR(t.Context(), "octocat", "hello", 7); err != nil {
 		t.Fatalf("CheckoutPR returned error: %v", err)
 	}
 	if !hasDeadline {
@@ -96,7 +96,7 @@ func TestOpenPRInBrowserAppliesDeadline(t *testing.T) {
 		return bytes.Buffer{}, bytes.Buffer{}, nil
 	}
 
-	if err := OpenPRInBrowser("octocat", "hello", 9); err != nil {
+	if err := OpenPRInBrowser(t.Context(), "octocat", "hello", 9); err != nil {
 		t.Fatalf("OpenPRInBrowser returned error: %v", err)
 	}
 	if !hasDeadline {
@@ -138,7 +138,7 @@ func TestCheckoutPRLogsSuccessAndFailure(t *testing.T) {
 	execContext = func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
 		return bytes.Buffer{}, bytes.Buffer{}, nil
 	}
-	if err := CheckoutPR("octocat", "hello", 7); err != nil {
+	if err := CheckoutPR(t.Context(), "octocat", "hello", 7); err != nil {
 		t.Fatalf("CheckoutPR success returned error: %v", err)
 	}
 	if out := buf.String(); !strings.Contains(out, "level=INFO") || !strings.Contains(out, "checked out pr") || !strings.Contains(out, "pr=7") {
@@ -149,7 +149,7 @@ func TestCheckoutPRLogsSuccessAndFailure(t *testing.T) {
 	execContext = func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
 		return bytes.Buffer{}, bytes.Buffer{}, errors.New("boom")
 	}
-	if err := CheckoutPR("octocat", "hello", 7); err == nil {
+	if err := CheckoutPR(t.Context(), "octocat", "hello", 7); err == nil {
 		t.Fatal("expected CheckoutPR to return the exec error")
 	}
 	if out := buf.String(); !strings.Contains(out, "level=WARN") || !strings.Contains(out, "checkout failed") || !strings.Contains(out, "boom") {
@@ -169,7 +169,7 @@ func TestOpenPRInBrowserLogsSuccessAndFailure(t *testing.T) {
 	execContext = func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
 		return bytes.Buffer{}, bytes.Buffer{}, nil
 	}
-	if err := OpenPRInBrowser("octocat", "hello", 9); err != nil {
+	if err := OpenPRInBrowser(t.Context(), "octocat", "hello", 9); err != nil {
 		t.Fatalf("OpenPRInBrowser success returned error: %v", err)
 	}
 	if out := buf.String(); !strings.Contains(out, "level=INFO") || !strings.Contains(out, "opened pr in browser") || !strings.Contains(out, "pr=9") {
@@ -180,7 +180,7 @@ func TestOpenPRInBrowserLogsSuccessAndFailure(t *testing.T) {
 	execContext = func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
 		return bytes.Buffer{}, bytes.Buffer{}, errors.New("boom")
 	}
-	if err := OpenPRInBrowser("octocat", "hello", 9); err == nil {
+	if err := OpenPRInBrowser(t.Context(), "octocat", "hello", 9); err == nil {
 		t.Fatal("expected OpenPRInBrowser to return the exec error")
 	}
 	if out := buf.String(); !strings.Contains(out, "level=WARN") || !strings.Contains(out, "open in browser failed") || !strings.Contains(out, "boom") {
@@ -208,7 +208,7 @@ func TestCheckoutPRRefusesNonLocalRepo(t *testing.T) {
 		return bytes.Buffer{}, bytes.Buffer{}, nil
 	}
 
-	err := CheckoutPR("octocat", "hello", 7)
+	err := CheckoutPR(t.Context(), "octocat", "hello", 7)
 	if !errors.Is(err, ErrNotLocalRepo) {
 		t.Fatalf("err = %v, want ErrNotLocalRepo", err)
 	}
@@ -240,7 +240,7 @@ func TestCheckoutPRRefusesWhenLocalRepoUnknown(t *testing.T) {
 		return bytes.Buffer{}, bytes.Buffer{}, nil
 	}
 
-	err := CheckoutPR("octocat", "hello", 7)
+	err := CheckoutPR(t.Context(), "octocat", "hello", 7)
 	if !errors.Is(err, ErrNotLocalRepo) {
 		t.Fatalf("err = %v, want ErrNotLocalRepo", err)
 	}
@@ -267,7 +267,7 @@ func TestCheckoutPRMatchesCaseInsensitively(t *testing.T) {
 		return bytes.Buffer{}, bytes.Buffer{}, nil
 	}
 
-	if err := CheckoutPR("octocat", "hello", 7); err != nil {
+	if err := CheckoutPR(t.Context(), "octocat", "hello", 7); err != nil {
 		t.Fatalf("CheckoutPR returned error: %v", err)
 	}
 	if want := []string{"pr", "checkout", "7", "--repo", "octocat/hello"}; !slices.Equal(gotArgs, want) {

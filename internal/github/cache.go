@@ -1,6 +1,7 @@
 package github
 
 import (
+	"context"
 	"log/slog"
 	"sync"
 	"time"
@@ -76,15 +77,17 @@ var defaultCache = NewCache()
 
 // Repositories returns the authenticated user's repositories, served from the
 // cache when present. force bypasses the cache and refreshes the stored entry.
-func Repositories(force bool) ([]Repository, error) {
-	return getOrLoad(defaultCache, "repos", force, FetchUserRepositories)
+func Repositories(ctx context.Context, force bool) ([]Repository, error) {
+	return getOrLoad(defaultCache, "repos", force, func() ([]Repository, error) {
+		return FetchUserRepositories(ctx)
+	})
 }
 
 // RepoPRs returns the given repository's pull requests, served from the cache
 // when present. force bypasses the cache and refreshes the stored entry.
-func RepoPRs(owner, name string, force bool) (RepoContext, error) {
+func RepoPRs(ctx context.Context, owner, name string, force bool) (RepoContext, error) {
 	key := "prs:" + owner + "/" + name
 	return getOrLoad(defaultCache, key, force, func() (RepoContext, error) {
-		return FetchRepoPRs(owner, name)
+		return FetchRepoPRs(ctx, owner, name)
 	})
 }

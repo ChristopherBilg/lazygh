@@ -2,6 +2,7 @@
 package pr
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -74,7 +75,7 @@ type statusMsg string
 // a recoverable FetchErrMsg.
 func fetchPRsCmd(owner, name string, force bool) tea.Cmd {
 	return func() tea.Msg {
-		ctx, err := ghClient.RepoPRs(owner, name, force)
+		ctx, err := ghClient.RepoPRs(context.Background(), owner, name, force)
 		if err != nil {
 			if errors.Is(err, ghClient.ErrClientInit) {
 				return screen.ErrMsg{Err: err}
@@ -91,7 +92,7 @@ var checkoutPR = ghClient.CheckoutPR
 
 func checkoutCmd(owner, name string, prNumber int) tea.Cmd {
 	return func() tea.Msg {
-		if err := checkoutPR(owner, name, prNumber); err != nil {
+		if err := checkoutPR(context.Background(), owner, name, prNumber); err != nil {
 			if errors.Is(err, ghClient.ErrNotLocalRepo) {
 				return statusMsg(fmt.Sprintf("Checkout unavailable: lazygh isn't running in a clone of %s/%s", owner, name))
 			}
@@ -103,7 +104,7 @@ func checkoutCmd(owner, name string, prNumber int) tea.Cmd {
 
 func openBrowserCmd(owner, name string, prNumber int) tea.Cmd {
 	return func() tea.Msg {
-		if err := ghClient.OpenPRInBrowser(owner, name, prNumber); err != nil {
+		if err := ghClient.OpenPRInBrowser(context.Background(), owner, name, prNumber); err != nil {
 			return statusMsg(fmt.Sprintf("Open in browser failed: %v", err))
 		}
 		return statusMsg(fmt.Sprintf("Opened PR #%d in browser", prNumber))

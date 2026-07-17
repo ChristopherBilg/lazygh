@@ -131,42 +131,31 @@ func reposEndpoint(pageSize int) string {
 }
 
 // FetchUserRepositories gets the most recently pushed-to repositories for the
-// authenticated user. The count (per_page) defaults to 50 and is overridable via
-// Configure.
-func FetchUserRepositories() ([]Repository, error) {
+// authenticated user. per_page defaults to 50 and is overridable via Configure.
+func FetchUserRepositories(ctx context.Context) ([]Repository, error) {
 	client, err := newRESTClient()
 	if err != nil {
 		return nil, err
 	}
-
 	var repos []Repository
-	// Sort by pushed to show the most actively developed repos first
-	if err := client.Get(reposEndpoint(repoPageSize), &repos); err != nil {
+	if err := client.DoWithContext(ctx, http.MethodGet, reposEndpoint(repoPageSize), nil, &repos); err != nil {
 		return nil, err
 	}
-
 	return repos, nil
 }
 
 // FetchRepoPRs fetches the pull requests for the given owner/name.
-func FetchRepoPRs(owner, name string) (RepoContext, error) {
+func FetchRepoPRs(ctx context.Context, owner, name string) (RepoContext, error) {
 	client, err := newRESTClient()
 	if err != nil {
 		return RepoContext{}, err
 	}
-
 	endpoint := fmt.Sprintf("repos/%s/%s/pulls", owner, name)
 	var prs []PullRequest
-
-	if err := client.Get(endpoint, &prs); err != nil {
+	if err := client.DoWithContext(ctx, http.MethodGet, endpoint, nil, &prs); err != nil {
 		return RepoContext{}, err
 	}
-
-	return RepoContext{
-		Owner: owner,
-		Name:  name,
-		PRs:   prs,
-	}, nil
+	return RepoContext{Owner: owner, Name: name, PRs: prs}, nil
 }
 
 // CheckoutPR checks out the given PR of owner/name into the current git working
@@ -174,7 +163,7 @@ func FetchRepoPRs(owner, name string) (RepoContext, error) {
 // meaningful when lazygh is running inside a clone of the selected repository.
 // When the working directory is not that repository (or is not a resolvable git
 // repository at all), CheckoutPR returns ErrNotLocalRepo without running `gh`.
-func CheckoutPR(owner, name string, prNumber int) error {
+func CheckoutPR(ctx context.Context, owner, name string, prNumber int) error {
 	repo := fmt.Sprintf("%s/%s", owner, name)
 
 	local, err := currentRepo()
@@ -188,7 +177,7 @@ func CheckoutPR(owner, name string, prNumber int) error {
 		return ErrNotLocalRepo
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), SubprocessTimeout)
+	ctx, cancel := context.WithTimeout(ctx, SubprocessTimeout)
 	defer cancel()
 	_, _, err = execContext(ctx, "pr", "checkout", strconv.Itoa(prNumber), "--repo", repo)
 	if err != nil {
@@ -202,8 +191,8 @@ func CheckoutPR(owner, name string, prNumber int) error {
 // OpenPRInBrowser opens the given PR of owner/name in the browser. Passing
 // --repo scopes `gh` to the selected repository instead of letting it resolve
 // one from the current working directory, so it works for any selected repo.
-func OpenPRInBrowser(owner, name string, prNumber int) error {
-	ctx, cancel := context.WithTimeout(context.Background(), SubprocessTimeout)
+func OpenPRInBrowser(ctx context.Context, owner, name string, prNumber int) error {
+	ctx, cancel := context.WithTimeout(ctx, SubprocessTimeout)
 	defer cancel()
 	repo := fmt.Sprintf("%s/%s", owner, name)
 	_, _, err := execContext(ctx, "pr", "view", strconv.Itoa(prNumber), "--repo", repo, "--web")

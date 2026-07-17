@@ -2,6 +2,7 @@
 package repolist
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -54,7 +55,7 @@ func (reposMsg) TargetView() screen.ViewID { return screen.ViewRepoList }
 // fatal (ErrMsg); any other failure is a recoverable FetchErrMsg.
 func fetchReposCmd(force bool) tea.Cmd {
 	return func() tea.Msg {
-		repos, err := ghClient.Repositories(force)
+		repos, err := ghClient.Repositories(context.Background(), force)
 		if err != nil {
 			if errors.Is(err, ghClient.ErrClientInit) {
 				return screen.ErrMsg{Err: err}

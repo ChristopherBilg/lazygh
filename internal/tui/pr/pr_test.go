@@ -1,6 +1,7 @@
 package pr
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -317,7 +318,7 @@ func TestStatusMessageShownInFooter(t *testing.T) {
 func TestCheckoutCmdUnavailableMessage(t *testing.T) {
 	orig := checkoutPR
 	t.Cleanup(func() { checkoutPR = orig })
-	checkoutPR = func(_, _ string, _ int) error { return ghClient.ErrNotLocalRepo }
+	checkoutPR = func(_ context.Context, _, _ string, _ int) error { return ghClient.ErrNotLocalRepo }
 
 	msg := checkoutCmd("octocat", "other", 42)()
 	status, ok := msg.(statusMsg)
@@ -332,7 +333,7 @@ func TestCheckoutCmdUnavailableMessage(t *testing.T) {
 func TestCheckoutCmdSuccessMessage(t *testing.T) {
 	orig := checkoutPR
 	t.Cleanup(func() { checkoutPR = orig })
-	checkoutPR = func(_, _ string, _ int) error { return nil }
+	checkoutPR = func(_ context.Context, _, _ string, _ int) error { return nil }
 
 	msg := checkoutCmd("octocat", "hello", 7)()
 	status, ok := msg.(statusMsg)
@@ -347,7 +348,7 @@ func TestCheckoutCmdSuccessMessage(t *testing.T) {
 func TestCheckoutCmdFailureMessage(t *testing.T) {
 	orig := checkoutPR
 	t.Cleanup(func() { checkoutPR = orig })
-	checkoutPR = func(_, _ string, _ int) error { return errors.New("boom") }
+	checkoutPR = func(_ context.Context, _, _ string, _ int) error { return errors.New("boom") }
 
 	msg := checkoutCmd("octocat", "hello", 7)()
 	status, ok := msg.(statusMsg)
