@@ -135,7 +135,7 @@ func TestCheckoutPRLogsSuccessAndFailure(t *testing.T) {
 	var buf bytes.Buffer
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 
-	execContext = func(ctx context.Context, args ...string) (stdout, stderr bytes.Buffer, err error) {
+	execContext = func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
 		return bytes.Buffer{}, bytes.Buffer{}, nil
 	}
 	if err := CheckoutPR("octocat", "hello", 7); err != nil {
@@ -146,7 +146,7 @@ func TestCheckoutPRLogsSuccessAndFailure(t *testing.T) {
 	}
 
 	buf.Reset()
-	execContext = func(ctx context.Context, args ...string) (stdout, stderr bytes.Buffer, err error) {
+	execContext = func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
 		return bytes.Buffer{}, bytes.Buffer{}, errors.New("boom")
 	}
 	if err := CheckoutPR("octocat", "hello", 7); err == nil {
@@ -166,7 +166,7 @@ func TestOpenPRInBrowserLogsSuccessAndFailure(t *testing.T) {
 	var buf bytes.Buffer
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 
-	execContext = func(ctx context.Context, args ...string) (stdout, stderr bytes.Buffer, err error) {
+	execContext = func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
 		return bytes.Buffer{}, bytes.Buffer{}, nil
 	}
 	if err := OpenPRInBrowser("octocat", "hello", 9); err != nil {
@@ -177,7 +177,7 @@ func TestOpenPRInBrowserLogsSuccessAndFailure(t *testing.T) {
 	}
 
 	buf.Reset()
-	execContext = func(ctx context.Context, args ...string) (stdout, stderr bytes.Buffer, err error) {
+	execContext = func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
 		return bytes.Buffer{}, bytes.Buffer{}, errors.New("boom")
 	}
 	if err := OpenPRInBrowser("octocat", "hello", 9); err == nil {
@@ -203,7 +203,7 @@ func TestCheckoutPRRefusesNonLocalRepo(t *testing.T) {
 		return repository.Repository{Owner: "someone", Name: "other"}, nil
 	}
 	called := false
-	execContext = func(ctx context.Context, args ...string) (stdout, stderr bytes.Buffer, err error) {
+	execContext = func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
 		called = true
 		return bytes.Buffer{}, bytes.Buffer{}, nil
 	}
@@ -235,7 +235,7 @@ func TestCheckoutPRRefusesWhenLocalRepoUnknown(t *testing.T) {
 		return repository.Repository{}, errors.New("no git remotes configured")
 	}
 	called := false
-	execContext = func(ctx context.Context, args ...string) (stdout, stderr bytes.Buffer, err error) {
+	execContext = func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
 		called = true
 		return bytes.Buffer{}, bytes.Buffer{}, nil
 	}
@@ -262,7 +262,7 @@ func TestCheckoutPRMatchesCaseInsensitively(t *testing.T) {
 		return repository.Repository{Owner: "OctoCat", Name: "Hello"}, nil
 	}
 	var gotArgs []string
-	execContext = func(ctx context.Context, args ...string) (stdout, stderr bytes.Buffer, err error) {
+	execContext = func(_ context.Context, args ...string) (stdout, stderr bytes.Buffer, err error) {
 		gotArgs = args
 		return bytes.Buffer{}, bytes.Buffer{}, nil
 	}
