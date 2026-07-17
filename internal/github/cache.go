@@ -72,22 +72,19 @@ func getOrLoad[T any](c *Cache, key string, force bool, load func() (T, error)) 
 	return v, nil
 }
 
-// defaultCache is the process-wide response cache used by the TUI.
-var defaultCache = NewCache()
-
 // Repositories returns the authenticated user's repositories, served from the
 // cache when present. force bypasses the cache and refreshes the stored entry.
-func Repositories(ctx context.Context, force bool) ([]Repository, error) {
-	return getOrLoad(defaultCache, "repos", force, func() ([]Repository, error) {
-		return FetchUserRepositories(ctx)
+func (c *Client) Repositories(ctx context.Context, force bool) ([]Repository, error) {
+	return getOrLoad(c.cache, "repos", force, func() ([]Repository, error) {
+		return c.FetchUserRepositories(ctx)
 	})
 }
 
 // RepoPRs returns the given repository's pull requests, served from the cache
 // when present. force bypasses the cache and refreshes the stored entry.
-func RepoPRs(ctx context.Context, owner, name string, force bool) (RepoContext, error) {
+func (c *Client) RepoPRs(ctx context.Context, owner, name string, force bool) (RepoContext, error) {
 	key := "prs:" + owner + "/" + name
-	return getOrLoad(defaultCache, key, force, func() (RepoContext, error) {
-		return FetchRepoPRs(ctx, owner, name)
+	return getOrLoad(c.cache, key, force, func() (RepoContext, error) {
+		return c.FetchRepoPRs(ctx, owner, name)
 	})
 }

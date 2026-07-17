@@ -14,22 +14,44 @@ import (
 	"github.com/cli/go-gh/v2/pkg/repository"
 )
 
-func TestTimeoutValues(t *testing.T) {
-	if RESTTimeout.Seconds() != 10 {
-		t.Fatalf("RESTTimeout = %v, want 10s", RESTTimeout)
+func TestNewClientSetsFields(t *testing.T) {
+	t.Parallel()
+	c := NewClient(ClientConfig{RESTTimeout: 5 * time.Second, SubprocessTimeout: time.Minute, RepoPageSize: 25})
+	if c.restTimeout != 5*time.Second {
+		t.Errorf("restTimeout = %v, want 5s", c.restTimeout)
 	}
-	if SubprocessTimeout.Seconds() != 30 {
-		t.Fatalf("SubprocessTimeout = %v, want 30s", SubprocessTimeout)
+	if c.subprocessTimeout != time.Minute {
+		t.Errorf("subprocessTimeout = %v, want 1m", c.subprocessTimeout)
+	}
+	if c.pageSize != 25 {
+		t.Errorf("pageSize = %d, want 25", c.pageSize)
+	}
+}
+
+func TestNewClientAppliesDefaults(t *testing.T) {
+	t.Parallel()
+	c := NewClient(ClientConfig{})
+	if c.restTimeout != defaultRESTTimeout {
+		t.Errorf("restTimeout = %v, want %v", c.restTimeout, defaultRESTTimeout)
+	}
+	if c.subprocessTimeout != defaultSubprocessTimeout {
+		t.Errorf("subprocessTimeout = %v, want %v", c.subprocessTimeout, defaultSubprocessTimeout)
+	}
+	if c.pageSize != defaultRepoPageSize {
+		t.Errorf("pageSize = %d, want %d", c.pageSize, defaultRepoPageSize)
 	}
 }
 
 func TestRESTClientOptionsSetsTimeout(t *testing.T) {
-	if got := restClientOptions().Timeout; got != RESTTimeout {
-		t.Fatalf("options Timeout = %v, want %v", got, RESTTimeout)
+	t.Parallel()
+	c := NewClient(ClientConfig{})
+	if got := c.restClientOptions().Timeout; got != defaultRESTTimeout {
+		t.Fatalf("options Timeout = %v, want %v", got, defaultRESTTimeout)
 	}
 }
 
 func TestNewRESTClientWrapsInitError(t *testing.T) {
+	// No t.Parallel: t.Setenv mutates process environment.
 	// Hermetic no-auth env: clear every token source and point config at an
 	// empty dir so go-gh resolves no token and NewRESTClient fails.
 	t.Setenv("GH_TOKEN", "")
@@ -41,7 +63,7 @@ func TestNewRESTClientWrapsInitError(t *testing.T) {
 	// keyring); point GH_PATH at a nonexistent binary so that fallback fails too.
 	t.Setenv("GH_PATH", filepath.Join(t.TempDir(), "no-such-gh"))
 
-	_, err := newRESTClient()
+	_, err := NewClient(ClientConfig{}).newRESTClient()
 	if err == nil {
 		t.Fatal("expected newRESTClient to fail with no auth token available")
 	}
@@ -51,67 +73,69 @@ func TestNewRESTClientWrapsInitError(t *testing.T) {
 }
 
 func TestCheckoutPRAppliesDeadline(t *testing.T) {
-	origExec := execContext
-	t.Cleanup(func() { execContext = origExec })
-	origRepo := currentRepo
-	t.Cleanup(func() { currentRepo = origRepo })
-
-	currentRepo = func() (repository.Repository, error) {
-		return repository.Repository{Owner: "octocat", Name: "hello"}, nil
-	}
-
+	t.Parallel()
 	var deadline time.Time
 	var hasDeadline bool
 	var gotArgs []string
-	execContext = func(ctx context.Context, args ...string) (stdout, stderr bytes.Buffer, err error) {
-		deadline, hasDeadline = ctx.Deadline()
-		gotArgs = args
-		return bytes.Buffer{}, bytes.Buffer{}, nil
+	c := &Client{
+		subprocessTimeout: 30 * time.Second,
+		currentRepo: func() (repository.Repository, error) {
+			return repository.Repository{Owner: "octocat", Name: "hello"}, nil
+		},
+		exec: func(ctx context.Context, args ...string) (stdout, stderr bytes.Buffer, err error) {
+			deadline, hasDeadline = ctx.Deadline()
+			gotArgs = args
+			return bytes.Buffer{}, bytes.Buffer{}, nil
+		},
 	}
 
-	if err := CheckoutPR(t.Context(), "octocat", "hello", 7); err != nil {
+	if err := c.CheckoutPR(t.Context(), "octocat", "hello", 7); err != nil {
 		t.Fatalf("CheckoutPR returned error: %v", err)
 	}
 	if !hasDeadline {
 		t.Fatal("expected CheckoutPR to pass a context with a deadline")
 	}
-	if d := time.Until(deadline); d < SubprocessTimeout-2*time.Second || d > SubprocessTimeout+time.Second {
-		t.Fatalf("deadline in %v, want ~%v", d, SubprocessTimeout)
+	wantWindow := 30 * time.Second
+	if d := time.Until(deadline); d < wantWindow-2*time.Second || d > wantWindow+time.Second {
+		t.Fatalf("deadline in %v, want ~%v", d, wantWindow)
 	}
-	if want := []string{"pr", "checkout", "7", "--repo", "octocat/hello"}; !slices.Equal(gotArgs, want) {
-		t.Fatalf("args = %v, want %v", gotArgs, want)
+	if wantArgs := []string{"pr", "checkout", "7", "--repo", "octocat/hello"}; !slices.Equal(gotArgs, wantArgs) {
+		t.Fatalf("args = %v, want %v", gotArgs, wantArgs)
 	}
 }
 
 func TestOpenPRInBrowserAppliesDeadline(t *testing.T) {
-	orig := execContext
-	t.Cleanup(func() { execContext = orig })
-
+	t.Parallel()
 	var deadline time.Time
 	var hasDeadline bool
 	var gotArgs []string
-	execContext = func(ctx context.Context, args ...string) (stdout, stderr bytes.Buffer, err error) {
-		deadline, hasDeadline = ctx.Deadline()
-		gotArgs = args
-		return bytes.Buffer{}, bytes.Buffer{}, nil
+	c := &Client{
+		subprocessTimeout: 30 * time.Second,
+		exec: func(ctx context.Context, args ...string) (stdout, stderr bytes.Buffer, err error) {
+			deadline, hasDeadline = ctx.Deadline()
+			gotArgs = args
+			return bytes.Buffer{}, bytes.Buffer{}, nil
+		},
 	}
 
-	if err := OpenPRInBrowser(t.Context(), "octocat", "hello", 9); err != nil {
+	if err := c.OpenPRInBrowser(t.Context(), "octocat", "hello", 9); err != nil {
 		t.Fatalf("OpenPRInBrowser returned error: %v", err)
 	}
 	if !hasDeadline {
 		t.Fatal("expected OpenPRInBrowser to pass a context with a deadline")
 	}
-	if d := time.Until(deadline); d < SubprocessTimeout-2*time.Second || d > SubprocessTimeout+time.Second {
-		t.Fatalf("deadline in %v, want ~%v", d, SubprocessTimeout)
+	wantWindow := 30 * time.Second
+	if d := time.Until(deadline); d < wantWindow-2*time.Second || d > wantWindow+time.Second {
+		t.Fatalf("deadline in %v, want ~%v", d, wantWindow)
 	}
-	if want := []string{"pr", "view", "9", "--repo", "octocat/hello", "--web"}; !slices.Equal(gotArgs, want) {
-		t.Fatalf("args = %v, want %v", gotArgs, want)
+	if wantArgs := []string{"pr", "view", "9", "--repo", "octocat/hello", "--web"}; !slices.Equal(gotArgs, wantArgs) {
+		t.Fatalf("args = %v, want %v", gotArgs, wantArgs)
 	}
 }
 
 func TestRESTClientOptionsEnablesTUISafeLogging(t *testing.T) {
-	opts := restClientOptions()
+	t.Parallel()
+	opts := NewClient(ClientConfig{}).restClientOptions()
 	if !opts.LogIgnoreEnv {
 		t.Error("LogIgnoreEnv = false, want true (GH_DEBUG must not write to stderr)")
 	}
@@ -121,24 +145,23 @@ func TestRESTClientOptionsEnablesTUISafeLogging(t *testing.T) {
 }
 
 func TestCheckoutPRLogsSuccessAndFailure(t *testing.T) {
-	origExec := execContext
-	t.Cleanup(func() { execContext = origExec })
-	origRepo := currentRepo
-	t.Cleanup(func() { currentRepo = origRepo })
+	// No t.Parallel: slog.SetDefault mutates the process-wide default logger.
 	origLogger := slog.Default()
 	t.Cleanup(func() { slog.SetDefault(origLogger) })
-
-	currentRepo = func() (repository.Repository, error) {
-		return repository.Repository{Owner: "octocat", Name: "hello"}, nil
-	}
 
 	var buf bytes.Buffer
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 
-	execContext = func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
-		return bytes.Buffer{}, bytes.Buffer{}, nil
+	c := &Client{
+		subprocessTimeout: 30 * time.Second,
+		currentRepo: func() (repository.Repository, error) {
+			return repository.Repository{Owner: "octocat", Name: "hello"}, nil
+		},
+		exec: func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
+			return bytes.Buffer{}, bytes.Buffer{}, nil
+		},
 	}
-	if err := CheckoutPR(t.Context(), "octocat", "hello", 7); err != nil {
+	if err := c.CheckoutPR(t.Context(), "octocat", "hello", 7); err != nil {
 		t.Fatalf("CheckoutPR success returned error: %v", err)
 	}
 	if out := buf.String(); !strings.Contains(out, "level=INFO") || !strings.Contains(out, "checked out pr") || !strings.Contains(out, "pr=7") {
@@ -146,10 +169,10 @@ func TestCheckoutPRLogsSuccessAndFailure(t *testing.T) {
 	}
 
 	buf.Reset()
-	execContext = func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
+	c.exec = func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
 		return bytes.Buffer{}, bytes.Buffer{}, errors.New("boom")
 	}
-	if err := CheckoutPR(t.Context(), "octocat", "hello", 7); err == nil {
+	if err := c.CheckoutPR(t.Context(), "octocat", "hello", 7); err == nil {
 		t.Fatal("expected CheckoutPR to return the exec error")
 	}
 	if out := buf.String(); !strings.Contains(out, "level=WARN") || !strings.Contains(out, "checkout failed") || !strings.Contains(out, "boom") {
@@ -158,18 +181,20 @@ func TestCheckoutPRLogsSuccessAndFailure(t *testing.T) {
 }
 
 func TestOpenPRInBrowserLogsSuccessAndFailure(t *testing.T) {
-	origExec := execContext
-	t.Cleanup(func() { execContext = origExec })
+	// No t.Parallel: slog.SetDefault mutates the process-wide default logger.
 	origLogger := slog.Default()
 	t.Cleanup(func() { slog.SetDefault(origLogger) })
 
 	var buf bytes.Buffer
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 
-	execContext = func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
-		return bytes.Buffer{}, bytes.Buffer{}, nil
+	c := &Client{
+		subprocessTimeout: 30 * time.Second,
+		exec: func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
+			return bytes.Buffer{}, bytes.Buffer{}, nil
+		},
 	}
-	if err := OpenPRInBrowser(t.Context(), "octocat", "hello", 9); err != nil {
+	if err := c.OpenPRInBrowser(t.Context(), "octocat", "hello", 9); err != nil {
 		t.Fatalf("OpenPRInBrowser success returned error: %v", err)
 	}
 	if out := buf.String(); !strings.Contains(out, "level=INFO") || !strings.Contains(out, "opened pr in browser") || !strings.Contains(out, "pr=9") {
@@ -177,10 +202,10 @@ func TestOpenPRInBrowserLogsSuccessAndFailure(t *testing.T) {
 	}
 
 	buf.Reset()
-	execContext = func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
+	c.exec = func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
 		return bytes.Buffer{}, bytes.Buffer{}, errors.New("boom")
 	}
-	if err := OpenPRInBrowser(t.Context(), "octocat", "hello", 9); err == nil {
+	if err := c.OpenPRInBrowser(t.Context(), "octocat", "hello", 9); err == nil {
 		t.Fatal("expected OpenPRInBrowser to return the exec error")
 	}
 	if out := buf.String(); !strings.Contains(out, "level=WARN") || !strings.Contains(out, "open in browser failed") || !strings.Contains(out, "boom") {
@@ -189,26 +214,25 @@ func TestOpenPRInBrowserLogsSuccessAndFailure(t *testing.T) {
 }
 
 func TestCheckoutPRRefusesNonLocalRepo(t *testing.T) {
-	origExec := execContext
-	t.Cleanup(func() { execContext = origExec })
-	origRepo := currentRepo
-	t.Cleanup(func() { currentRepo = origRepo })
+	// No t.Parallel: slog.SetDefault mutates the process-wide default logger.
 	origLogger := slog.Default()
 	t.Cleanup(func() { slog.SetDefault(origLogger) })
 
 	var buf bytes.Buffer
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 
-	currentRepo = func() (repository.Repository, error) {
-		return repository.Repository{Owner: "someone", Name: "other"}, nil
-	}
 	called := false
-	execContext = func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
-		called = true
-		return bytes.Buffer{}, bytes.Buffer{}, nil
+	c := &Client{
+		currentRepo: func() (repository.Repository, error) {
+			return repository.Repository{Owner: "someone", Name: "other"}, nil
+		},
+		exec: func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
+			called = true
+			return bytes.Buffer{}, bytes.Buffer{}, nil
+		},
 	}
 
-	err := CheckoutPR(t.Context(), "octocat", "hello", 7)
+	err := c.CheckoutPR(t.Context(), "octocat", "hello", 7)
 	if !errors.Is(err, ErrNotLocalRepo) {
 		t.Fatalf("err = %v, want ErrNotLocalRepo", err)
 	}
@@ -221,26 +245,25 @@ func TestCheckoutPRRefusesNonLocalRepo(t *testing.T) {
 }
 
 func TestCheckoutPRRefusesWhenLocalRepoUnknown(t *testing.T) {
-	origExec := execContext
-	t.Cleanup(func() { execContext = origExec })
-	origRepo := currentRepo
-	t.Cleanup(func() { currentRepo = origRepo })
+	// No t.Parallel: slog.SetDefault mutates the process-wide default logger.
 	origLogger := slog.Default()
 	t.Cleanup(func() { slog.SetDefault(origLogger) })
 
 	var buf bytes.Buffer
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 
-	currentRepo = func() (repository.Repository, error) {
-		return repository.Repository{}, errors.New("no git remotes configured")
-	}
 	called := false
-	execContext = func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
-		called = true
-		return bytes.Buffer{}, bytes.Buffer{}, nil
+	c := &Client{
+		currentRepo: func() (repository.Repository, error) {
+			return repository.Repository{}, errors.New("no git remotes configured")
+		},
+		exec: func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
+			called = true
+			return bytes.Buffer{}, bytes.Buffer{}, nil
+		},
 	}
 
-	err := CheckoutPR(t.Context(), "octocat", "hello", 7)
+	err := c.CheckoutPR(t.Context(), "octocat", "hello", 7)
 	if !errors.Is(err, ErrNotLocalRepo) {
 		t.Fatalf("err = %v, want ErrNotLocalRepo", err)
 	}
@@ -253,21 +276,20 @@ func TestCheckoutPRRefusesWhenLocalRepoUnknown(t *testing.T) {
 }
 
 func TestCheckoutPRMatchesCaseInsensitively(t *testing.T) {
-	origExec := execContext
-	t.Cleanup(func() { execContext = origExec })
-	origRepo := currentRepo
-	t.Cleanup(func() { currentRepo = origRepo })
-
-	currentRepo = func() (repository.Repository, error) {
-		return repository.Repository{Owner: "OctoCat", Name: "Hello"}, nil
-	}
+	t.Parallel()
 	var gotArgs []string
-	execContext = func(_ context.Context, args ...string) (stdout, stderr bytes.Buffer, err error) {
-		gotArgs = args
-		return bytes.Buffer{}, bytes.Buffer{}, nil
+	c := &Client{
+		subprocessTimeout: 30 * time.Second,
+		currentRepo: func() (repository.Repository, error) {
+			return repository.Repository{Owner: "OctoCat", Name: "Hello"}, nil
+		},
+		exec: func(_ context.Context, args ...string) (stdout, stderr bytes.Buffer, err error) {
+			gotArgs = args
+			return bytes.Buffer{}, bytes.Buffer{}, nil
+		},
 	}
 
-	if err := CheckoutPR(t.Context(), "octocat", "hello", 7); err != nil {
+	if err := c.CheckoutPR(t.Context(), "octocat", "hello", 7); err != nil {
 		t.Fatalf("CheckoutPR returned error: %v", err)
 	}
 	if want := []string{"pr", "checkout", "7", "--repo", "octocat/hello"}; !slices.Equal(gotArgs, want) {
@@ -276,42 +298,11 @@ func TestCheckoutPRMatchesCaseInsensitively(t *testing.T) {
 }
 
 func TestReposEndpoint(t *testing.T) {
+	t.Parallel()
 	if got, want := reposEndpoint(50), "user/repos?sort=pushed&per_page=50"; got != want {
 		t.Errorf("reposEndpoint(50) = %q, want %q", got, want)
 	}
 	if got, want := reposEndpoint(10), "user/repos?sort=pushed&per_page=10"; got != want {
 		t.Errorf("reposEndpoint(10) = %q, want %q", got, want)
-	}
-}
-
-func TestConfigureOverridesDefaults(t *testing.T) {
-	origREST, origSub, origPage := RESTTimeout, SubprocessTimeout, repoPageSize
-	t.Cleanup(func() { RESTTimeout, SubprocessTimeout, repoPageSize = origREST, origSub, origPage })
-
-	Configure(5*time.Second, 1*time.Minute, 25)
-	if RESTTimeout != 5*time.Second {
-		t.Errorf("RESTTimeout = %v, want 5s", RESTTimeout)
-	}
-	if SubprocessTimeout != time.Minute {
-		t.Errorf("SubprocessTimeout = %v, want 1m", SubprocessTimeout)
-	}
-	if repoPageSize != 25 {
-		t.Errorf("repoPageSize = %d, want 25", repoPageSize)
-	}
-}
-
-func TestConfigureIgnoresNonPositive(t *testing.T) {
-	origREST, origSub, origPage := RESTTimeout, SubprocessTimeout, repoPageSize
-	t.Cleanup(func() { RESTTimeout, SubprocessTimeout, repoPageSize = origREST, origSub, origPage })
-
-	Configure(0, -1, 0)
-	if RESTTimeout != origREST {
-		t.Errorf("RESTTimeout changed to %v, want unchanged %v", RESTTimeout, origREST)
-	}
-	if SubprocessTimeout != origSub {
-		t.Errorf("SubprocessTimeout changed to %v, want unchanged %v", SubprocessTimeout, origSub)
-	}
-	if repoPageSize != origPage {
-		t.Errorf("repoPageSize changed to %d, want unchanged %d", repoPageSize, origPage)
 	}
 }

@@ -16,9 +16,24 @@ import (
 	"github.com/ChristopherBilg/lazygh/internal/tui/screen"
 )
 
+// fakeBackend is a pr.Backend test double. RepoPRs/OpenPRInBrowser succeed
+// trivially; CheckoutPR returns checkoutErr so checkout result handling can be
+// exercised without spawning `gh` or requiring a local git repository.
+type fakeBackend struct {
+	checkoutErr error
+}
+
+func (fakeBackend) RepoPRs(_ context.Context, owner, name string, _ bool) (ghClient.RepoContext, error) {
+	return ghClient.RepoContext{Owner: owner, Name: name}, nil
+}
+
+func (f fakeBackend) CheckoutPR(_ context.Context, _, _ string, _ int) error { return f.checkoutErr }
+
+func (fakeBackend) OpenPRInBrowser(_ context.Context, _, _ string, _ int) error { return nil }
+
 // withPRs builds a loaded PR screen with n synthetic pull requests.
 func withPRs(n int) Model {
-	m := New("octocat", "hello", 100, 40)
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40)
 	m.loading = false
 	prs := make([]ghClient.PullRequest, n)
 	for i := range prs {
@@ -30,6 +45,7 @@ func withPRs(n int) Model {
 }
 
 func TestTabTogglesFocus(t *testing.T) {
+	t.Parallel()
 	m := withPRs(2)
 	if m.focus != focusList {
 		t.Fatalf("initial focus = %d, want focusList", m.focus)
@@ -45,6 +61,7 @@ func TestTabTogglesFocus(t *testing.T) {
 }
 
 func TestCursorNavigationInList(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		start      int
@@ -58,6 +75,7 @@ func TestCursorNavigationInList(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			m := withPRs(3)
 			m.cursor = tt.start
 			updated, _ := m.Update(tt.key)
@@ -69,6 +87,7 @@ func TestCursorNavigationInList(t *testing.T) {
 }
 
 func TestCheckoutEmitsCommandAndSetsMessage(t *testing.T) {
+	t.Parallel()
 	m := withPRs(2)
 	m.cursor = 1
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
@@ -81,6 +100,7 @@ func TestCheckoutEmitsCommandAndSetsMessage(t *testing.T) {
 }
 
 func TestOpenEmitsCommandAndSetsMessage(t *testing.T) {
+	t.Parallel()
 	m := withPRs(2)
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 	if cmd == nil {
@@ -92,6 +112,7 @@ func TestOpenEmitsCommandAndSetsMessage(t *testing.T) {
 }
 
 func TestCheckoutEmptyListNoOp(t *testing.T) {
+	t.Parallel()
 	m := withPRs(0)
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 	if cmd != nil {
@@ -103,7 +124,8 @@ func TestCheckoutEmptyListNoOp(t *testing.T) {
 }
 
 func TestPRDataMsgPopulates(t *testing.T) {
-	m := New("octocat", "hello", 100, 40)
+	t.Parallel()
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40)
 	ctx := ghClient.RepoContext{
 		Owner: "octocat",
 		Name:  "hello",
@@ -120,6 +142,7 @@ func TestPRDataMsgPopulates(t *testing.T) {
 }
 
 func TestViewRendersTabBar(t *testing.T) {
+	t.Parallel()
 	m := withPRs(1)
 	v := m.View()
 	for _, label := range []string{"Pull Requests", "Issues", "Actions"} {
@@ -133,7 +156,8 @@ func TestViewRendersTabBar(t *testing.T) {
 }
 
 func TestLoadingViewRendersTabBar(t *testing.T) {
-	m := New("octocat", "hello", 100, 40) // loading == true
+	t.Parallel()
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40) // loading == true
 	v := m.View()
 	for _, label := range []string{"Pull Requests", "Issues", "Actions"} {
 		if !strings.Contains(v, label) {
@@ -146,6 +170,7 @@ func TestLoadingViewRendersTabBar(t *testing.T) {
 }
 
 func TestRefreshEntersRefreshingState(t *testing.T) {
+	t.Parallel()
 	m := withPRs(2)
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	um := updated.(Model)
@@ -164,6 +189,7 @@ func TestRefreshEntersRefreshingState(t *testing.T) {
 }
 
 func TestPRDataMsgClearsRefreshingState(t *testing.T) {
+	t.Parallel()
 	m := withPRs(2)
 	m.refreshing = true
 	ctx := ghClient.RepoContext{
@@ -178,6 +204,7 @@ func TestPRDataMsgClearsRefreshingState(t *testing.T) {
 }
 
 func TestPRDataMsgClampsCursorWhenListShrinks(t *testing.T) {
+	t.Parallel()
 	m := withPRs(3)
 	m.cursor = 2
 	ctx := ghClient.RepoContext{
@@ -193,6 +220,7 @@ func TestPRDataMsgClampsCursorWhenListShrinks(t *testing.T) {
 }
 
 func TestPRDataMsgResetsScrollOnRefresh(t *testing.T) {
+	t.Parallel()
 	m := withPRs(1)
 	// A tall body so the viewport can actually scroll.
 	m.ctx.PRs[0].Body = strings.Repeat("line\n", 200)
@@ -213,6 +241,7 @@ func TestPRDataMsgResetsScrollOnRefresh(t *testing.T) {
 }
 
 func TestPRDataMsgPreservesNonRefreshMessage(t *testing.T) {
+	t.Parallel()
 	m := withPRs(2)
 	m.message = "Opened PR #1 in browser"
 	ctx := ghClient.RepoContext{
@@ -227,12 +256,14 @@ func TestPRDataMsgPreservesNonRefreshMessage(t *testing.T) {
 }
 
 func TestPRDataMsgTargetView(t *testing.T) {
+	t.Parallel()
 	if prDataMsg(ghClient.RepoContext{}).TargetView() != screen.ViewPR {
 		t.Fatal("prDataMsg must target the PR view")
 	}
 }
 
 func TestPRDataMsgClearsFetchErr(t *testing.T) {
+	t.Parallel()
 	m := withPRs(1)
 	m.fetchErr = errors.New("old")
 	ctx := ghClient.RepoContext{Owner: "o", Name: "n", PRs: []ghClient.PullRequest{{Number: 1}}}
@@ -243,7 +274,8 @@ func TestPRDataMsgClearsFetchErr(t *testing.T) {
 }
 
 func TestFetchErrMsgWithNoDataShowsError(t *testing.T) {
-	m := New("octocat", "hello", 100, 40) // loading, no PRs
+	t.Parallel()
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40) // loading, no PRs
 	updated, _ := m.Update(screen.FetchErrMsg{View: screen.ViewPR, Err: errors.New("boom")})
 	um := updated.(Model)
 	if um.loading {
@@ -259,6 +291,7 @@ func TestFetchErrMsgWithNoDataShowsError(t *testing.T) {
 }
 
 func TestFetchErrMsgWithDataKeepsListAndFooterError(t *testing.T) {
+	t.Parallel()
 	m := withPRs(2)
 	m.refreshing = true
 	updated, _ := m.Update(screen.FetchErrMsg{View: screen.ViewPR, Err: errors.New("timeout")})
@@ -279,6 +312,7 @@ func TestFetchErrMsgWithDataKeepsListAndFooterError(t *testing.T) {
 }
 
 func TestSpinnerTickIgnoredWhenIdle(t *testing.T) {
+	t.Parallel()
 	m := withPRs(1) // not loading, not refreshing
 	_, cmd := m.Update(spinner.TickMsg{})
 	if cmd != nil {
@@ -287,7 +321,8 @@ func TestSpinnerTickIgnoredWhenIdle(t *testing.T) {
 }
 
 func TestSpinnerTickContinuesWhileFetching(t *testing.T) {
-	m := New("octocat", "hello", 100, 40) // loading == true
+	t.Parallel()
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40) // loading == true
 	_, cmd := m.Update(spinner.TickMsg{})
 	if cmd == nil {
 		t.Fatal("expected the tick loop to continue while loading")
@@ -295,6 +330,7 @@ func TestSpinnerTickContinuesWhileFetching(t *testing.T) {
 }
 
 func TestRefreshingViewShowsSpinnerFooter(t *testing.T) {
+	t.Parallel()
 	m := withPRs(2)
 	m.refreshing = true
 	v := m.View()
@@ -307,6 +343,7 @@ func TestRefreshingViewShowsSpinnerFooter(t *testing.T) {
 }
 
 func TestStatusMessageShownInFooter(t *testing.T) {
+	t.Parallel()
 	m := withPRs(2)
 	m.message = "Opened PR #1 in browser"
 	v := m.View()
@@ -316,11 +353,9 @@ func TestStatusMessageShownInFooter(t *testing.T) {
 }
 
 func TestCheckoutCmdUnavailableMessage(t *testing.T) {
-	orig := checkoutPR
-	t.Cleanup(func() { checkoutPR = orig })
-	checkoutPR = func(_ context.Context, _, _ string, _ int) error { return ghClient.ErrNotLocalRepo }
-
-	msg := checkoutCmd("octocat", "other", 42)()
+	t.Parallel()
+	m := New(fakeBackend{checkoutErr: ghClient.ErrNotLocalRepo}, "octocat", "other", 100, 40)
+	msg := m.checkoutCmd("octocat", "other", 42)()
 	status, ok := msg.(statusMsg)
 	if !ok {
 		t.Fatalf("expected statusMsg, got %T", msg)
@@ -331,11 +366,9 @@ func TestCheckoutCmdUnavailableMessage(t *testing.T) {
 }
 
 func TestCheckoutCmdSuccessMessage(t *testing.T) {
-	orig := checkoutPR
-	t.Cleanup(func() { checkoutPR = orig })
-	checkoutPR = func(_ context.Context, _, _ string, _ int) error { return nil }
-
-	msg := checkoutCmd("octocat", "hello", 7)()
+	t.Parallel()
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40)
+	msg := m.checkoutCmd("octocat", "hello", 7)()
 	status, ok := msg.(statusMsg)
 	if !ok {
 		t.Fatalf("expected statusMsg, got %T", msg)
@@ -346,11 +379,9 @@ func TestCheckoutCmdSuccessMessage(t *testing.T) {
 }
 
 func TestCheckoutCmdFailureMessage(t *testing.T) {
-	orig := checkoutPR
-	t.Cleanup(func() { checkoutPR = orig })
-	checkoutPR = func(_ context.Context, _, _ string, _ int) error { return errors.New("boom") }
-
-	msg := checkoutCmd("octocat", "hello", 7)()
+	t.Parallel()
+	m := New(fakeBackend{checkoutErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	msg := m.checkoutCmd("octocat", "hello", 7)()
 	status, ok := msg.(statusMsg)
 	if !ok {
 		t.Fatalf("expected statusMsg, got %T", msg)
@@ -361,6 +392,7 @@ func TestCheckoutCmdFailureMessage(t *testing.T) {
 }
 
 func TestCheckoutRemapTakesEffect(t *testing.T) {
+	// No t.Parallel: keys.Configure mutates the process-wide key map.
 	t.Cleanup(func() { keys.Configure(config.Default().Keys) })
 	kc := config.Default().Keys
 	kc.Checkout = []string{"x"}

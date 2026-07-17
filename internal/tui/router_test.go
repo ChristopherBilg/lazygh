@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/ChristopherBilg/lazygh/internal/config"
+	ghClient "github.com/ChristopherBilg/lazygh/internal/github"
 	"github.com/ChristopherBilg/lazygh/internal/tui/keys"
 	"github.com/ChristopherBilg/lazygh/internal/tui/repolist"
 	"github.com/ChristopherBilg/lazygh/internal/tui/screen"
@@ -24,8 +25,16 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+// newTestModel builds a router with a real github client. Router tests drive
+// navigation with synthetic messages and never execute a fetch, so the client
+// never touches the network.
+func newTestModel() Model {
+	return NewModel(ghClient.NewClient(ghClient.ClientConfig{}))
+}
+
 func TestRepoSelectedSwitchesToPRView(t *testing.T) {
-	m := NewModel()
+	t.Parallel()
+	m := newTestModel()
 	updated, cmd := m.Update(repolist.RepoSelectedMsg{Owner: "octocat", Name: "hello"})
 	rm := updated.(Model)
 	if rm.active != viewPR {
@@ -40,7 +49,8 @@ func TestRepoSelectedSwitchesToPRView(t *testing.T) {
 }
 
 func TestEscReturnsToRepoList(t *testing.T) {
-	m := NewModel()
+	t.Parallel()
+	m := newTestModel()
 	updated, _ := m.Update(repolist.RepoSelectedMsg{Owner: "o", Name: "n"})
 	afterSelect := updated.(Model)
 	if afterSelect.active != viewPR {
@@ -53,7 +63,8 @@ func TestEscReturnsToRepoList(t *testing.T) {
 }
 
 func TestErrMsgSetsError(t *testing.T) {
-	m := NewModel()
+	t.Parallel()
+	m := newTestModel()
 	updated, _ := m.Update(screen.ErrMsg{Err: errors.New("boom")})
 	if err := updated.(Model).err; err == nil || err.Error() != "boom" {
 		t.Fatalf("expected err \"boom\", got %v", err)
@@ -61,7 +72,8 @@ func TestErrMsgSetsError(t *testing.T) {
 }
 
 func TestWindowSizeStored(t *testing.T) {
-	m := NewModel()
+	t.Parallel()
+	m := newTestModel()
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 123, Height: 45})
 	rm := updated.(Model)
 	if rm.width != 123 || rm.height != 45 {
@@ -70,7 +82,8 @@ func TestWindowSizeStored(t *testing.T) {
 }
 
 func TestQuitOnQ(t *testing.T) {
-	m := NewModel()
+	t.Parallel()
+	m := newTestModel()
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	if cmd == nil {
 		t.Fatal("expected quit command on 'q'")
@@ -81,7 +94,8 @@ func TestQuitOnQ(t *testing.T) {
 }
 
 func TestForwardRoutesNonGlobalKeyToRepoList(t *testing.T) {
-	m := NewModel()
+	t.Parallel()
+	m := newTestModel()
 	// A non-global key (not q/ctrl+c/esc/backspace) must be forwarded to the
 	// active screen via forward(); the router itself must not change views.
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
@@ -91,7 +105,8 @@ func TestForwardRoutesNonGlobalKeyToRepoList(t *testing.T) {
 }
 
 func TestForwardRoutesToActivePRScreen(t *testing.T) {
-	m := NewModel()
+	t.Parallel()
+	m := newTestModel()
 	selected, _ := m.Update(repolist.RepoSelectedMsg{Owner: "o", Name: "n"})
 	// A non-global key while in PR view is forwarded to the PR screen; the
 	// router stays in PR view.
@@ -102,7 +117,8 @@ func TestForwardRoutesToActivePRScreen(t *testing.T) {
 }
 
 func TestViewShowsErrorOverlay(t *testing.T) {
-	m := NewModel()
+	t.Parallel()
+	m := newTestModel()
 	errored, _ := m.Update(screen.ErrMsg{Err: errors.New("boom")})
 	if view := errored.(Model).View(); !strings.Contains(view, "Error: boom") {
 		t.Fatalf("expected error overlay, got %q", view)
@@ -110,7 +126,8 @@ func TestViewShowsErrorOverlay(t *testing.T) {
 }
 
 func TestViewDelegatesToRepoList(t *testing.T) {
-	m := NewModel()
+	t.Parallel()
+	m := newTestModel()
 	// No error, repo list active: View delegates to the repo-list screen,
 	// which shows its loading text initially.
 	if view := m.View(); !strings.Contains(view, "Fetching your repositories") {
@@ -119,7 +136,8 @@ func TestViewDelegatesToRepoList(t *testing.T) {
 }
 
 func TestViewDelegatesToPRScreen(t *testing.T) {
-	m := NewModel()
+	t.Parallel()
+	m := newTestModel()
 	selected, _ := m.Update(repolist.RepoSelectedMsg{Owner: "o", Name: "hello"})
 	// PR view active, no error: View delegates to the PR screen (loading text).
 	if view := selected.(Model).View(); !strings.Contains(view, "Fetching PRs for hello") {
@@ -128,7 +146,8 @@ func TestViewDelegatesToPRScreen(t *testing.T) {
 }
 
 func TestResizeAfterSelectionReachesPRScreen(t *testing.T) {
-	m := NewModel()
+	t.Parallel()
+	m := newTestModel()
 	selected, _ := m.Update(repolist.RepoSelectedMsg{Owner: "o", Name: "n"})
 	resized, _ := selected.(Model).Update(tea.WindowSizeMsg{Width: 120, Height: 50})
 	rm := resized.(Model)
@@ -141,7 +160,8 @@ func TestResizeAfterSelectionReachesPRScreen(t *testing.T) {
 }
 
 func TestNumberKeysSwitchViewsAfterSelection(t *testing.T) {
-	m := NewModel()
+	t.Parallel()
+	m := newTestModel()
 	sel, _ := m.Update(repolist.RepoSelectedMsg{Owner: "o", Name: "n"})
 	cur := sel.(Model)
 
@@ -163,7 +183,8 @@ func TestNumberKeysSwitchViewsAfterSelection(t *testing.T) {
 }
 
 func TestNumberKeysIgnoredOnRepoList(t *testing.T) {
-	m := NewModel()
+	t.Parallel()
+	m := newTestModel()
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
 	if updated.(Model).active != viewRepoList {
 		t.Fatal("expected number keys to be ignored on the repo list")
@@ -171,7 +192,8 @@ func TestNumberKeysIgnoredOnRepoList(t *testing.T) {
 }
 
 func TestSwitchingViewsDoesNotReinit(t *testing.T) {
-	m := NewModel()
+	t.Parallel()
+	m := newTestModel()
 	sel, cmd := m.Update(repolist.RepoSelectedMsg{Owner: "o", Name: "n"})
 	if cmd == nil {
 		t.Fatal("expected an Init command when the per-repo screens are built")
@@ -185,7 +207,8 @@ func TestSwitchingViewsDoesNotReinit(t *testing.T) {
 }
 
 func TestAllPerRepoScreensBuiltOnSelection(t *testing.T) {
-	m := NewModel()
+	t.Parallel()
+	m := newTestModel()
 	sel, _ := m.Update(repolist.RepoSelectedMsg{Owner: "o", Name: "n"})
 	rm := sel.(Model)
 	for _, v := range perRepoViews {
@@ -207,6 +230,7 @@ func (r *recorderScreen) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 func (r *recorderScreen) View() string { return "" }
 
 func TestAddressedMsgRoutedToOriginatingView(t *testing.T) {
+	t.Parallel()
 	prRec := &recorderScreen{}
 	issuesRec := &recorderScreen{}
 	m := Model{
@@ -226,12 +250,13 @@ func TestAddressedMsgRoutedToOriginatingView(t *testing.T) {
 }
 
 func TestErrMsgLogsError(t *testing.T) {
+	// No t.Parallel: slog.SetDefault mutates the process-wide default logger.
 	orig := slog.Default()
 	t.Cleanup(func() { slog.SetDefault(orig) })
 	var buf bytes.Buffer
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 
-	m := NewModel()
+	m := newTestModel()
 	m.Update(screen.ErrMsg{Err: errors.New("boom")})
 	if out := buf.String(); !strings.Contains(out, "level=ERROR") || !strings.Contains(out, "fatal view error") || !strings.Contains(out, "boom") {
 		t.Fatalf("expected fatal error log, got: %s", out)
@@ -239,6 +264,7 @@ func TestErrMsgLogsError(t *testing.T) {
 }
 
 func TestFetchErrMsgLogsWarning(t *testing.T) {
+	// No t.Parallel: slog.SetDefault mutates the process-wide default logger.
 	orig := slog.Default()
 	t.Cleanup(func() { slog.SetDefault(orig) })
 	var buf bytes.Buffer
@@ -255,12 +281,13 @@ func TestFetchErrMsgLogsWarning(t *testing.T) {
 }
 
 func TestCtrlCAlwaysQuitsEvenWhenQuitRemapped(t *testing.T) {
+	// No t.Parallel: keys.Configure mutates the process-wide key map.
 	t.Cleanup(func() { keys.Configure(config.Default().Keys) })
 	kc := config.Default().Keys
 	kc.Quit = []string{"x"} // move quit away from q
 	keys.Configure(kc)
 
-	m := NewModel()
+	m := newTestModel()
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	if cmd == nil {
 		t.Fatal("ctrl+c must always quit")

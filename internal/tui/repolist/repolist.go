@@ -18,8 +18,14 @@ import (
 	"github.com/ChristopherBilg/lazygh/internal/tui/styles"
 )
 
+// Backend is the subset of the github client the repo-list screen needs.
+type Backend interface {
+	Repositories(ctx context.Context, force bool) ([]ghClient.Repository, error)
+}
+
 // Model is the repository-selection screen.
 type Model struct {
+	backend    Backend
 	repos      []ghClient.Repository
 	cursor     int
 	loading    bool
@@ -30,9 +36,11 @@ type Model struct {
 	height     int
 }
 
-// New returns a repository-selection screen in its initial loading state.
-func New() Model {
+// New returns a repository-selection screen in its initial loading state,
+// backed by the given github client.
+func New(backend Backend) Model {
 	return Model{
+		backend: backend,
 		loading: true,
 		spinner: spinner.New(spinner.WithSpinner(spinner.Dot)),
 	}
@@ -53,9 +61,10 @@ func (reposMsg) TargetView() screen.ViewID { return screen.ViewRepoList }
 // fetchReposCmd fetches the authenticated user's repositories. force bypasses
 // the in-memory cache and refreshes the stored entry. A client-init failure is
 // fatal (ErrMsg); any other failure is a recoverable FetchErrMsg.
-func fetchReposCmd(force bool) tea.Cmd {
+func (m Model) fetchReposCmd(force bool) tea.Cmd {
 	return func() tea.Msg {
-		repos, err := ghClient.Repositories(context.Background(), force)
+		// context.Background() for now; a program-scoped context is future work.
+		repos, err := m.backend.Repositories(context.Background(), force)
 		if err != nil {
 			if errors.Is(err, ghClient.ErrClientInit) {
 				return screen.ErrMsg{Err: err}
@@ -68,7 +77,7 @@ func fetchReposCmd(force bool) tea.Cmd {
 
 // Init starts fetching repositories (from cache when available) and the spinner.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(fetchReposCmd(false), m.spinner.Tick)
+	return tea.Batch(m.fetchReposCmd(false), m.spinner.Tick)
 }
 
 // Update handles navigation and selection.
@@ -135,7 +144,7 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 			} else {
 				m.refreshing = true
 			}
-			cmds = append(cmds, fetchReposCmd(true))
+			cmds = append(cmds, m.fetchReposCmd(true))
 			if !wasFetching {
 				cmds = append(cmds, m.spinner.Tick)
 			}

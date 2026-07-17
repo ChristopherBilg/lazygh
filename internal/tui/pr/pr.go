@@ -29,8 +29,16 @@ const (
 	focusDetails
 )
 
+// Backend is the subset of the github client the PR screen needs.
+type Backend interface {
+	RepoPRs(ctx context.Context, owner, name string, force bool) (ghClient.RepoContext, error)
+	CheckoutPR(ctx context.Context, owner, name string, prNumber int) error
+	OpenPRInBrowser(ctx context.Context, owner, name string, prNumber int) error
+}
+
 // Model is the pull-request split-pane screen.
 type Model struct {
+	backend    Backend
 	ctx        ghClient.RepoContext
 	cursor     int
 	focus      focus
@@ -45,11 +53,12 @@ type Model struct {
 	ready      bool
 }
 
-// New returns a PR screen for the given repository, sized to the current window.
-// The repository owner/name are stored immediately so the loading view can show
-// the repository name.
-func New(owner, name string, width, height int) Model {
+// New returns a PR screen for the given repository, sized to the current window,
+// backed by the given github client. The repository owner/name are stored
+// immediately so the loading view can show the repository name.
+func New(backend Backend, owner, name string, width, height int) Model {
 	m := Model{
+		backend: backend,
 		ctx:     ghClient.RepoContext{Owner: owner, Name: name},
 		focus:   focusList,
 		loading: true,
@@ -73,26 +82,24 @@ type statusMsg string
 // fetchPRsCmd fetches the open PRs for the given repository. force bypasses the
 // in-memory cache. A client-init failure is fatal (ErrMsg); any other failure is
 // a recoverable FetchErrMsg.
-func fetchPRsCmd(owner, name string, force bool) tea.Cmd {
+func (m Model) fetchPRsCmd(owner, name string, force bool) tea.Cmd {
 	return func() tea.Msg {
-		ctx, err := ghClient.RepoPRs(context.Background(), owner, name, force)
+		// context.Background() for now; a program-scoped context is future work.
+		data, err := m.backend.RepoPRs(context.Background(), owner, name, force)
 		if err != nil {
 			if errors.Is(err, ghClient.ErrClientInit) {
 				return screen.ErrMsg{Err: err}
 			}
 			return screen.FetchErrMsg{View: screen.ViewPR, Err: err}
 		}
-		return prDataMsg(ctx)
+		return prDataMsg(data)
 	}
 }
 
-// checkoutPR is indirected so checkoutCmd's result handling can be tested
-// without spawning `gh` or requiring a local git repository.
-var checkoutPR = ghClient.CheckoutPR
-
-func checkoutCmd(owner, name string, prNumber int) tea.Cmd {
+func (m Model) checkoutCmd(owner, name string, prNumber int) tea.Cmd {
 	return func() tea.Msg {
-		if err := checkoutPR(context.Background(), owner, name, prNumber); err != nil {
+		// context.Background() for now; a program-scoped context is future work.
+		if err := m.backend.CheckoutPR(context.Background(), owner, name, prNumber); err != nil {
 			if errors.Is(err, ghClient.ErrNotLocalRepo) {
 				return statusMsg(fmt.Sprintf("Checkout unavailable: lazygh isn't running in a clone of %s/%s", owner, name))
 			}
@@ -102,9 +109,10 @@ func checkoutCmd(owner, name string, prNumber int) tea.Cmd {
 	}
 }
 
-func openBrowserCmd(owner, name string, prNumber int) tea.Cmd {
+func (m Model) openBrowserCmd(owner, name string, prNumber int) tea.Cmd {
 	return func() tea.Msg {
-		if err := ghClient.OpenPRInBrowser(context.Background(), owner, name, prNumber); err != nil {
+		// context.Background() for now; a program-scoped context is future work.
+		if err := m.backend.OpenPRInBrowser(context.Background(), owner, name, prNumber); err != nil {
 			return statusMsg(fmt.Sprintf("Open in browser failed: %v", err))
 		}
 		return statusMsg(fmt.Sprintf("Opened PR #%d in browser", prNumber))
@@ -113,7 +121,7 @@ func openBrowserCmd(owner, name string, prNumber int) tea.Cmd {
 
 // Init starts fetching pull requests (from cache when available) and the spinner.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(fetchPRsCmd(m.ctx.Owner, m.ctx.Name, false), m.spinner.Tick)
+	return tea.Batch(m.fetchPRsCmd(m.ctx.Owner, m.ctx.Name, false), m.spinner.Tick)
 }
 
 // Update handles focus, navigation, PR actions, and data messages.
@@ -171,12 +179,12 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		case key.Matches(msg, keys.Map.Checkout):
 			if len(m.ctx.PRs) > 0 {
 				m.message = "Checking out branch..."
-				cmds = append(cmds, checkoutCmd(m.ctx.Owner, m.ctx.Name, m.ctx.PRs[m.cursor].Number))
+				cmds = append(cmds, m.checkoutCmd(m.ctx.Owner, m.ctx.Name, m.ctx.PRs[m.cursor].Number))
 			}
 		case key.Matches(msg, keys.Map.Open):
 			if len(m.ctx.PRs) > 0 {
 				m.message = "Opening browser..."
-				cmds = append(cmds, openBrowserCmd(m.ctx.Owner, m.ctx.Name, m.ctx.PRs[m.cursor].Number))
+				cmds = append(cmds, m.openBrowserCmd(m.ctx.Owner, m.ctx.Name, m.ctx.PRs[m.cursor].Number))
 			}
 		case key.Matches(msg, keys.Map.Refresh):
 			// Manual refresh: bypass the cache, keep the current PRs visible.
@@ -188,7 +196,7 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 			} else {
 				m.refreshing = true
 			}
-			cmds = append(cmds, fetchPRsCmd(m.ctx.Owner, m.ctx.Name, true))
+			cmds = append(cmds, m.fetchPRsCmd(m.ctx.Owner, m.ctx.Name, true))
 			if !wasFetching {
 				cmds = append(cmds, m.spinner.Tick)
 			}

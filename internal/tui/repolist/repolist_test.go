@@ -1,6 +1,7 @@
 package repolist
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -13,6 +14,14 @@ import (
 	"github.com/ChristopherBilg/lazygh/internal/tui/screen"
 )
 
+// fakeBackend is a repolist.Backend test double; the repo-list tests never
+// execute the fetch command, so a trivial success is enough.
+type fakeBackend struct{}
+
+func (fakeBackend) Repositories(_ context.Context, _ bool) ([]ghClient.Repository, error) {
+	return nil, nil
+}
+
 func repo(owner, name string) ghClient.Repository {
 	r := ghClient.Repository{Name: name}
 	r.Owner.Login = owner
@@ -22,7 +31,7 @@ func repo(owner, name string) ghClient.Repository {
 // loaded builds a loaded repo-list screen (spinner initialized via New) with n
 // synthetic repositories and a sized window.
 func loaded(n int) Model {
-	m := New()
+	m := New(fakeBackend{})
 	m.loading = false
 	m.width = 80
 	m.height = 24
@@ -35,6 +44,7 @@ func loaded(n int) Model {
 }
 
 func TestUpdateCursorNavigation(t *testing.T) {
+	t.Parallel()
 	repos := []ghClient.Repository{repo("o", "a"), repo("o", "b"), repo("o", "c")}
 
 	tests := []struct {
@@ -52,6 +62,7 @@ func TestUpdateCursorNavigation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			m := Model{repos: repos, cursor: tt.startCur}
 			updated, _ := m.Update(tt.key)
 			if got := updated.(Model).cursor; got != tt.wantCursor {
@@ -62,6 +73,7 @@ func TestUpdateCursorNavigation(t *testing.T) {
 }
 
 func TestEnterEmitsRepoSelectedMsg(t *testing.T) {
+	t.Parallel()
 	repos := []ghClient.Repository{repo("octocat", "hello"), repo("octocat", "world")}
 	m := Model{repos: repos, cursor: 1}
 
@@ -80,6 +92,7 @@ func TestEnterEmitsRepoSelectedMsg(t *testing.T) {
 }
 
 func TestEnterEmptyListNoOp(t *testing.T) {
+	t.Parallel()
 	m := Model{}
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd != nil {
@@ -88,6 +101,7 @@ func TestEnterEmptyListNoOp(t *testing.T) {
 }
 
 func TestReposMsgPopulates(t *testing.T) {
+	t.Parallel()
 	m := Model{loading: true}
 	updated, _ := m.Update(reposMsg([]ghClient.Repository{repo("o", "a")}))
 	um := updated.(Model)
@@ -100,6 +114,7 @@ func TestReposMsgPopulates(t *testing.T) {
 }
 
 func TestRefreshEmitsForceFetch(t *testing.T) {
+	t.Parallel()
 	m := Model{repos: []ghClient.Repository{repo("o", "a")}}
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if cmd == nil {
@@ -115,6 +130,7 @@ func TestRefreshEmitsForceFetch(t *testing.T) {
 }
 
 func TestReposMsgClampsCursorWhenListShrinks(t *testing.T) {
+	t.Parallel()
 	m := Model{
 		repos:  []ghClient.Repository{repo("o", "a"), repo("o", "b"), repo("o", "c")},
 		cursor: 2,
@@ -138,6 +154,7 @@ func TestReposMsgClampsCursorWhenListShrinks(t *testing.T) {
 }
 
 func TestReposMsgClearsFetchErr(t *testing.T) {
+	t.Parallel()
 	m := loaded(1)
 	m.fetchErr = errors.New("old")
 	updated, _ := m.Update(reposMsg([]ghClient.Repository{repo("o", "a")}))
@@ -147,13 +164,15 @@ func TestReposMsgClearsFetchErr(t *testing.T) {
 }
 
 func TestReposMsgTargetView(t *testing.T) {
+	t.Parallel()
 	if (reposMsg{}).TargetView() != screen.ViewRepoList {
 		t.Fatal("reposMsg must target the repo-list view")
 	}
 }
 
 func TestFetchErrMsgWithNoDataShowsError(t *testing.T) {
-	m := New()
+	t.Parallel()
+	m := New(fakeBackend{})
 	m.width = 80
 	updated, _ := m.Update(screen.FetchErrMsg{View: screen.ViewRepoList, Err: errors.New("boom")})
 	um := updated.(Model)
@@ -170,6 +189,7 @@ func TestFetchErrMsgWithNoDataShowsError(t *testing.T) {
 }
 
 func TestFetchErrMsgWithDataKeepsListAndFooterError(t *testing.T) {
+	t.Parallel()
 	m := loaded(2)
 	m.refreshing = true
 	updated, _ := m.Update(screen.FetchErrMsg{View: screen.ViewRepoList, Err: errors.New("timeout")})
@@ -190,6 +210,7 @@ func TestFetchErrMsgWithDataKeepsListAndFooterError(t *testing.T) {
 }
 
 func TestSpinnerTickIgnoredWhenIdle(t *testing.T) {
+	t.Parallel()
 	m := loaded(1) // not loading, not refreshing
 	_, cmd := m.Update(spinner.TickMsg{})
 	if cmd != nil {
@@ -198,7 +219,8 @@ func TestSpinnerTickIgnoredWhenIdle(t *testing.T) {
 }
 
 func TestSpinnerTickContinuesWhileFetching(t *testing.T) {
-	m := New() // loading == true, real spinner
+	t.Parallel()
+	m := New(fakeBackend{}) // loading == true, real spinner
 	_, cmd := m.Update(spinner.TickMsg{})
 	if cmd == nil {
 		t.Fatal("expected the tick loop to continue while loading")
@@ -206,6 +228,7 @@ func TestSpinnerTickContinuesWhileFetching(t *testing.T) {
 }
 
 func TestRefreshingViewShowsSpinnerFooter(t *testing.T) {
+	t.Parallel()
 	m := loaded(2)
 	m.refreshing = true
 	v := m.View()
@@ -218,6 +241,7 @@ func TestRefreshingViewShowsSpinnerFooter(t *testing.T) {
 }
 
 func TestDefaultFooterShowsHints(t *testing.T) {
+	t.Parallel()
 	m := loaded(2)
 	v := m.View()
 	if !strings.Contains(v, "Navigate") || !strings.Contains(v, "Refresh") {
