@@ -2,6 +2,7 @@
 package pr
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -21,17 +22,28 @@ import (
 	"github.com/ChristopherBilg/lazygh/internal/tui/styles"
 )
 
+// focus identifies which pane of the split view has keyboard focus.
+type focus int
+
 // Focus targets within the split pane.
 const (
-	focusList = iota
+	focusList focus = iota
 	focusDetails
 )
 
+// Backend is the subset of the github client the PR screen needs.
+type Backend interface {
+	RepoPRs(ctx context.Context, owner, name string, force bool) (ghClient.RepoContext, error)
+	CheckoutPR(ctx context.Context, owner, name string, prNumber int) error
+	OpenPRInBrowser(ctx context.Context, owner, name string, prNumber int) error
+}
+
 // Model is the pull-request split-pane screen.
 type Model struct {
+	backend    Backend
 	ctx        ghClient.RepoContext
 	cursor     int
-	focus      int
+	focus      focus
 	loading    bool
 	refreshing bool
 	fetchErr   error
@@ -47,16 +59,17 @@ type Model struct {
 	ready      bool
 }
 
-// New returns a PR screen for the given repository, sized to the current window.
-// The repository owner/name are stored immediately so the loading view can show
-// the repository name.
-func New(owner, name string, width, height int) Model {
+// New returns a PR screen for the given repository, sized to the current window,
+// backed by the given github client. The repository owner/name are stored
+// immediately so the loading view can show the repository name.
+func New(backend Backend, owner, name string, width, height int) Model {
 	ti := textinput.New()
 	ti.Prompt = "/ "
 	ti.Placeholder = "filter titles"
 	ti.CharLimit = 128
 
 	m := Model{
+		backend: backend,
 		ctx:     ghClient.RepoContext{Owner: owner, Name: name},
 		focus:   focusList,
 		loading: true,
@@ -163,26 +176,24 @@ type statusMsg string
 // fetchPRsCmd fetches the open PRs for the given repository. force bypasses the
 // in-memory cache. A client-init failure is fatal (ErrMsg); any other failure is
 // a recoverable FetchErrMsg.
-func fetchPRsCmd(owner, name string, force bool) tea.Cmd {
+func (m Model) fetchPRsCmd(owner, name string, force bool) tea.Cmd {
 	return func() tea.Msg {
-		ctx, err := ghClient.RepoPRs(owner, name, force)
+		// context.Background() for now; a program-scoped context is future work.
+		data, err := m.backend.RepoPRs(context.Background(), owner, name, force)
 		if err != nil {
 			if errors.Is(err, ghClient.ErrClientInit) {
 				return screen.ErrMsg{Err: err}
 			}
 			return screen.FetchErrMsg{View: screen.ViewPR, Err: err}
 		}
-		return prDataMsg(ctx)
+		return prDataMsg(data)
 	}
 }
 
-// checkoutPR is indirected so checkoutCmd's result handling can be tested
-// without spawning `gh` or requiring a local git repository.
-var checkoutPR = ghClient.CheckoutPR
-
-func checkoutCmd(owner, name string, prNumber int) tea.Cmd {
+func (m Model) checkoutCmd(owner, name string, prNumber int) tea.Cmd {
 	return func() tea.Msg {
-		if err := checkoutPR(owner, name, prNumber); err != nil {
+		// context.Background() for now; a program-scoped context is future work.
+		if err := m.backend.CheckoutPR(context.Background(), owner, name, prNumber); err != nil {
 			if errors.Is(err, ghClient.ErrNotLocalRepo) {
 				return statusMsg(fmt.Sprintf("Checkout unavailable: lazygh isn't running in a clone of %s/%s", owner, name))
 			}
@@ -192,9 +203,10 @@ func checkoutCmd(owner, name string, prNumber int) tea.Cmd {
 	}
 }
 
-func openBrowserCmd(owner, name string, prNumber int) tea.Cmd {
+func (m Model) openBrowserCmd(owner, name string, prNumber int) tea.Cmd {
 	return func() tea.Msg {
-		if err := ghClient.OpenPRInBrowser(owner, name, prNumber); err != nil {
+		// context.Background() for now; a program-scoped context is future work.
+		if err := m.backend.OpenPRInBrowser(context.Background(), owner, name, prNumber); err != nil {
 			return statusMsg(fmt.Sprintf("Open in browser failed: %v", err))
 		}
 		return statusMsg(fmt.Sprintf("Opened PR #%d in browser", prNumber))
@@ -203,7 +215,7 @@ func openBrowserCmd(owner, name string, prNumber int) tea.Cmd {
 
 // Init starts fetching pull requests (from cache when available) and the spinner.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(fetchPRsCmd(m.ctx.Owner, m.ctx.Name, false), m.spinner.Tick)
+	return tea.Batch(m.fetchPRsCmd(m.ctx.Owner, m.ctx.Name, false), m.spinner.Tick)
 }
 
 // Update handles focus, navigation, PR actions, and data messages.
@@ -275,12 +287,12 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		case key.Matches(msg, keys.Map.Checkout):
 			if pr, ok := m.selectedPR(); ok {
 				m.message = "Checking out branch..."
-				cmds = append(cmds, checkoutCmd(m.ctx.Owner, m.ctx.Name, pr.Number))
+				cmds = append(cmds, m.checkoutCmd(m.ctx.Owner, m.ctx.Name, pr.Number))
 			}
 		case key.Matches(msg, keys.Map.Open):
 			if pr, ok := m.selectedPR(); ok {
 				m.message = "Opening browser..."
-				cmds = append(cmds, openBrowserCmd(m.ctx.Owner, m.ctx.Name, pr.Number))
+				cmds = append(cmds, m.openBrowserCmd(m.ctx.Owner, m.ctx.Name, pr.Number))
 			}
 		case key.Matches(msg, keys.Map.Refresh):
 			// Manual refresh: bypass the cache, keep the current PRs visible.
@@ -292,7 +304,7 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 			} else {
 				m.refreshing = true
 			}
-			cmds = append(cmds, fetchPRsCmd(m.ctx.Owner, m.ctx.Name, true))
+			cmds = append(cmds, m.fetchPRsCmd(m.ctx.Owner, m.ctx.Name, true))
 			if !wasFetching {
 				cmds = append(cmds, m.spinner.Tick)
 			}
@@ -331,22 +343,22 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 func (m *Model) resizeViewport() {
 	headerHeight := 5 // +1 for the nav.Bar line above the repo header
 	footerHeight := 2
-	contentHeight := m.height - headerHeight - footerHeight
+	contentHeight := max(m.height-headerHeight-footerHeight, 1)
 	rightPaneWidth := (m.width * 7) / 10
-	leftPaneWidth := (m.width * 3) / 10
+	vpWidth := max(rightPaneWidth-2, 1)
+	vpHeight := max(contentHeight-2, 1)
 
 	if !m.ready {
-		m.viewport = viewport.New(rightPaneWidth-2, contentHeight-2)
+		m.viewport = viewport.New(vpWidth, vpHeight)
 		m.ready = true
 	} else {
-		m.viewport.Width = rightPaneWidth - 2
-		m.viewport.Height = contentHeight - 2
+		m.viewport.Width = vpWidth
+		m.viewport.Height = vpHeight
 	}
 	// The filter input sits inside the left pane; size it to the inner width
 	// (minus borders and the "/ " prompt) so a long query scrolls within the box.
-	if w := leftPaneWidth - 5; w > 0 {
-		m.input.Width = w
-	}
+	leftPaneWidth := (m.width * 3) / 10
+	m.input.Width = max(leftPaneWidth-5, 1)
 	m.updateViewportContent()
 }
 
@@ -354,7 +366,7 @@ func (m *Model) updateViewportContent() {
 	activePR, ok := m.selectedPR()
 	if !ok {
 		if m.query != "" {
-			m.viewport.SetContent("") // the list pane shows the "no match" message (Task 5)
+			m.viewport.SetContent("") // the list pane shows the "no match" message
 		} else {
 			m.viewport.SetContent("No open PRs.")
 		}
@@ -388,7 +400,7 @@ func (m Model) View() string {
 	}
 
 	leftPaneWidth := (m.width * 3) / 10
-	paneHeight := m.height - 7
+	paneHeight := max(m.height-7, 1)
 
 	var listBorder, detailBorder lipgloss.Style
 	if m.focus == focusList {
@@ -419,13 +431,13 @@ func (m Model) renderList(paneWidth int) string {
 		b.WriteString("\n")
 	case m.query != "":
 		badge := fmt.Sprintf("filter: %q (%d/%d)", m.query, len(m.filtered), len(m.ctx.PRs))
-		b.WriteString(styles.Title.Render(styles.Truncate(badge, paneWidth-4)))
+		b.WriteString(styles.Title.Render(styles.TruncateEllipsis(badge, paneWidth-2)))
 		b.WriteString("\n")
 	}
 
 	if len(m.filtered) == 0 {
 		if m.query != "" {
-			b.WriteString(styles.Truncate(fmt.Sprintf("No PRs match %q.", m.query), paneWidth-2))
+			b.WriteString(styles.TruncateEllipsis(fmt.Sprintf("No PRs match %q.", m.query), paneWidth-2))
 		} else {
 			b.WriteString("No open PRs.")
 		}
@@ -435,10 +447,9 @@ func (m Model) renderList(paneWidth int) string {
 	for row, idx := range m.filtered {
 		pr := m.ctx.PRs[idx]
 		cursorStr := "  "
-		title := fmt.Sprintf("#%d %s", pr.Number, pr.Title)
-		if len(title) > paneWidth-6 && paneWidth-9 > 0 {
-			title = title[:paneWidth-9] + "..."
-		}
+		// Reserve 2 columns for the cursor prefix so the title never overflows the
+		// pane. TruncateEllipsis is width-aware and never panics on narrow widths.
+		title := styles.TruncateEllipsis(fmt.Sprintf("#%d %s", pr.Number, pr.Title), paneWidth-2)
 		if m.cursor == row {
 			cursorStr = "> "
 			title = styles.SelectedItem.Render(title)

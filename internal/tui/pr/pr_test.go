@@ -1,9 +1,11 @@
 package pr
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -14,9 +16,28 @@ import (
 	"github.com/ChristopherBilg/lazygh/internal/tui/screen"
 )
 
+// fakeBackend is a pr.Backend test double. RepoPRs/OpenPRInBrowser return the
+// injected prs/prsErr/openErr (zero values mean "succeed trivially"); CheckoutPR
+// returns checkoutErr. This lets checkout/open/fetch result handling be
+// exercised without spawning `gh` or requiring a local git repository.
+type fakeBackend struct {
+	checkoutErr error
+	prs         []ghClient.PullRequest
+	prsErr      error
+	openErr     error
+}
+
+func (f fakeBackend) RepoPRs(_ context.Context, owner, name string, _ bool) (ghClient.RepoContext, error) {
+	return ghClient.RepoContext{Owner: owner, Name: name, PRs: f.prs}, f.prsErr
+}
+
+func (f fakeBackend) CheckoutPR(_ context.Context, _, _ string, _ int) error { return f.checkoutErr }
+
+func (f fakeBackend) OpenPRInBrowser(_ context.Context, _, _ string, _ int) error { return f.openErr }
+
 // withPRs builds a loaded PR screen with n synthetic pull requests.
 func withPRs(n int) Model {
-	m := New("octocat", "hello", 100, 40)
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40)
 	m.loading = false
 	prs := make([]ghClient.PullRequest, n)
 	for i := range prs {
@@ -30,7 +51,7 @@ func withPRs(n int) Model {
 // withTitledPRs builds a loaded PR screen with one PR per given title (numbered
 // from 1), so search/ranking behavior can be asserted.
 func withTitledPRs(titles ...string) Model {
-	m := New("octocat", "hello", 120, 40)
+	m := New(fakeBackend{}, "octocat", "hello", 120, 40)
 	m.loading = false
 	prs := make([]ghClient.PullRequest, len(titles))
 	for i, title := range titles {
@@ -58,6 +79,7 @@ func typeRunes(m Model, s string) Model {
 }
 
 func TestTabTogglesFocus(t *testing.T) {
+	t.Parallel()
 	m := withPRs(2)
 	if m.focus != focusList {
 		t.Fatalf("initial focus = %d, want focusList", m.focus)
@@ -73,6 +95,7 @@ func TestTabTogglesFocus(t *testing.T) {
 }
 
 func TestCursorNavigationInList(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		start      int
@@ -86,6 +109,7 @@ func TestCursorNavigationInList(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			m := withPRs(3)
 			m.cursor = tt.start
 			updated, _ := m.Update(tt.key)
@@ -97,6 +121,7 @@ func TestCursorNavigationInList(t *testing.T) {
 }
 
 func TestCheckoutEmitsCommandAndSetsMessage(t *testing.T) {
+	t.Parallel()
 	m := withPRs(2)
 	m.cursor = 1
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
@@ -109,6 +134,7 @@ func TestCheckoutEmitsCommandAndSetsMessage(t *testing.T) {
 }
 
 func TestOpenEmitsCommandAndSetsMessage(t *testing.T) {
+	t.Parallel()
 	m := withPRs(2)
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
 	if cmd == nil {
@@ -120,6 +146,7 @@ func TestOpenEmitsCommandAndSetsMessage(t *testing.T) {
 }
 
 func TestCheckoutEmptyListNoOp(t *testing.T) {
+	t.Parallel()
 	m := withPRs(0)
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 	if cmd != nil {
@@ -131,7 +158,8 @@ func TestCheckoutEmptyListNoOp(t *testing.T) {
 }
 
 func TestPRDataMsgPopulates(t *testing.T) {
-	m := New("octocat", "hello", 100, 40)
+	t.Parallel()
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40)
 	ctx := ghClient.RepoContext{
 		Owner: "octocat",
 		Name:  "hello",
@@ -148,6 +176,7 @@ func TestPRDataMsgPopulates(t *testing.T) {
 }
 
 func TestViewRendersTabBar(t *testing.T) {
+	t.Parallel()
 	m := withPRs(1)
 	v := m.View()
 	for _, label := range []string{"Pull Requests", "Issues", "Actions"} {
@@ -161,7 +190,8 @@ func TestViewRendersTabBar(t *testing.T) {
 }
 
 func TestLoadingViewRendersTabBar(t *testing.T) {
-	m := New("octocat", "hello", 100, 40) // loading == true
+	t.Parallel()
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40) // loading == true
 	v := m.View()
 	for _, label := range []string{"Pull Requests", "Issues", "Actions"} {
 		if !strings.Contains(v, label) {
@@ -174,6 +204,7 @@ func TestLoadingViewRendersTabBar(t *testing.T) {
 }
 
 func TestRefreshEntersRefreshingState(t *testing.T) {
+	t.Parallel()
 	m := withPRs(2)
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	um := updated.(Model)
@@ -192,6 +223,7 @@ func TestRefreshEntersRefreshingState(t *testing.T) {
 }
 
 func TestPRDataMsgClearsRefreshingState(t *testing.T) {
+	t.Parallel()
 	m := withPRs(2)
 	m.refreshing = true
 	ctx := ghClient.RepoContext{
@@ -206,6 +238,7 @@ func TestPRDataMsgClearsRefreshingState(t *testing.T) {
 }
 
 func TestPRDataMsgClampsCursorWhenListShrinks(t *testing.T) {
+	t.Parallel()
 	m := withPRs(3)
 	m.cursor = 2
 	ctx := ghClient.RepoContext{
@@ -221,6 +254,7 @@ func TestPRDataMsgClampsCursorWhenListShrinks(t *testing.T) {
 }
 
 func TestPRDataMsgResetsScrollOnRefresh(t *testing.T) {
+	t.Parallel()
 	m := withPRs(1)
 	// A tall body so the viewport can actually scroll.
 	m.ctx.PRs[0].Body = strings.Repeat("line\n", 200)
@@ -241,6 +275,7 @@ func TestPRDataMsgResetsScrollOnRefresh(t *testing.T) {
 }
 
 func TestPRDataMsgPreservesNonRefreshMessage(t *testing.T) {
+	t.Parallel()
 	m := withPRs(2)
 	m.message = "Opened PR #1 in browser"
 	ctx := ghClient.RepoContext{
@@ -255,12 +290,14 @@ func TestPRDataMsgPreservesNonRefreshMessage(t *testing.T) {
 }
 
 func TestPRDataMsgTargetView(t *testing.T) {
+	t.Parallel()
 	if prDataMsg(ghClient.RepoContext{}).TargetView() != screen.ViewPR {
 		t.Fatal("prDataMsg must target the PR view")
 	}
 }
 
 func TestPRDataMsgClearsFetchErr(t *testing.T) {
+	t.Parallel()
 	m := withPRs(1)
 	m.fetchErr = errors.New("old")
 	ctx := ghClient.RepoContext{Owner: "o", Name: "n", PRs: []ghClient.PullRequest{{Number: 1}}}
@@ -271,7 +308,8 @@ func TestPRDataMsgClearsFetchErr(t *testing.T) {
 }
 
 func TestFetchErrMsgWithNoDataShowsError(t *testing.T) {
-	m := New("octocat", "hello", 100, 40) // loading, no PRs
+	t.Parallel()
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40) // loading, no PRs
 	updated, _ := m.Update(screen.FetchErrMsg{View: screen.ViewPR, Err: errors.New("boom")})
 	um := updated.(Model)
 	if um.loading {
@@ -287,6 +325,7 @@ func TestFetchErrMsgWithNoDataShowsError(t *testing.T) {
 }
 
 func TestFetchErrMsgWithDataKeepsListAndFooterError(t *testing.T) {
+	t.Parallel()
 	m := withPRs(2)
 	m.refreshing = true
 	updated, _ := m.Update(screen.FetchErrMsg{View: screen.ViewPR, Err: errors.New("timeout")})
@@ -307,6 +346,7 @@ func TestFetchErrMsgWithDataKeepsListAndFooterError(t *testing.T) {
 }
 
 func TestSpinnerTickIgnoredWhenIdle(t *testing.T) {
+	t.Parallel()
 	m := withPRs(1) // not loading, not refreshing
 	_, cmd := m.Update(spinner.TickMsg{})
 	if cmd != nil {
@@ -315,7 +355,8 @@ func TestSpinnerTickIgnoredWhenIdle(t *testing.T) {
 }
 
 func TestSpinnerTickContinuesWhileFetching(t *testing.T) {
-	m := New("octocat", "hello", 100, 40) // loading == true
+	t.Parallel()
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40) // loading == true
 	_, cmd := m.Update(spinner.TickMsg{})
 	if cmd == nil {
 		t.Fatal("expected the tick loop to continue while loading")
@@ -323,6 +364,7 @@ func TestSpinnerTickContinuesWhileFetching(t *testing.T) {
 }
 
 func TestRefreshingViewShowsSpinnerFooter(t *testing.T) {
+	t.Parallel()
 	m := withPRs(2)
 	m.refreshing = true
 	v := m.View()
@@ -335,6 +377,7 @@ func TestRefreshingViewShowsSpinnerFooter(t *testing.T) {
 }
 
 func TestStatusMessageShownInFooter(t *testing.T) {
+	t.Parallel()
 	m := withPRs(2)
 	m.message = "Opened PR #1 in browser"
 	v := m.View()
@@ -344,11 +387,9 @@ func TestStatusMessageShownInFooter(t *testing.T) {
 }
 
 func TestCheckoutCmdUnavailableMessage(t *testing.T) {
-	orig := checkoutPR
-	t.Cleanup(func() { checkoutPR = orig })
-	checkoutPR = func(owner, name string, prNumber int) error { return ghClient.ErrNotLocalRepo }
-
-	msg := checkoutCmd("octocat", "other", 42)()
+	t.Parallel()
+	m := New(fakeBackend{checkoutErr: ghClient.ErrNotLocalRepo}, "octocat", "other", 100, 40)
+	msg := m.checkoutCmd("octocat", "other", 42)()
 	status, ok := msg.(statusMsg)
 	if !ok {
 		t.Fatalf("expected statusMsg, got %T", msg)
@@ -359,11 +400,9 @@ func TestCheckoutCmdUnavailableMessage(t *testing.T) {
 }
 
 func TestCheckoutCmdSuccessMessage(t *testing.T) {
-	orig := checkoutPR
-	t.Cleanup(func() { checkoutPR = orig })
-	checkoutPR = func(owner, name string, prNumber int) error { return nil }
-
-	msg := checkoutCmd("octocat", "hello", 7)()
+	t.Parallel()
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40)
+	msg := m.checkoutCmd("octocat", "hello", 7)()
 	status, ok := msg.(statusMsg)
 	if !ok {
 		t.Fatalf("expected statusMsg, got %T", msg)
@@ -374,11 +413,9 @@ func TestCheckoutCmdSuccessMessage(t *testing.T) {
 }
 
 func TestCheckoutCmdFailureMessage(t *testing.T) {
-	orig := checkoutPR
-	t.Cleanup(func() { checkoutPR = orig })
-	checkoutPR = func(owner, name string, prNumber int) error { return errors.New("boom") }
-
-	msg := checkoutCmd("octocat", "hello", 7)()
+	t.Parallel()
+	m := New(fakeBackend{checkoutErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	msg := m.checkoutCmd("octocat", "hello", 7)()
 	status, ok := msg.(statusMsg)
 	if !ok {
 		t.Fatalf("expected statusMsg, got %T", msg)
@@ -388,7 +425,74 @@ func TestCheckoutCmdFailureMessage(t *testing.T) {
 	}
 }
 
+func TestOpenBrowserCmdSuccessMessage(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40)
+	msg := m.openBrowserCmd("octocat", "hello", 9)()
+	status, ok := msg.(statusMsg)
+	if !ok {
+		t.Fatalf("expected statusMsg, got %T", msg)
+	}
+	if got := string(status); !strings.Contains(got, "Opened PR #9 in browser") {
+		t.Fatalf("status = %q, want success message", got)
+	}
+}
+
+func TestOpenBrowserCmdFailureMessage(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{openErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	msg := m.openBrowserCmd("octocat", "hello", 9)()
+	status, ok := msg.(statusMsg)
+	if !ok {
+		t.Fatalf("expected statusMsg, got %T", msg)
+	}
+	if got := string(status); !strings.Contains(got, "Open in browser failed") || !strings.Contains(got, "boom") {
+		t.Fatalf("status = %q, want failure message", got)
+	}
+}
+
+func TestFetchPRsCmdSuccessReturnsData(t *testing.T) {
+	t.Parallel()
+	prs := []ghClient.PullRequest{{Number: 1, Title: "T", State: "open"}}
+	m := New(fakeBackend{prs: prs}, "octocat", "hello", 100, 40)
+	msg := m.fetchPRsCmd("octocat", "hello", false)()
+	data, ok := msg.(prDataMsg)
+	if !ok {
+		t.Fatalf("expected prDataMsg, got %T", msg)
+	}
+	if len(data.PRs) != 1 {
+		t.Fatalf("len(PRs) = %d, want 1", len(data.PRs))
+	}
+}
+
+func TestFetchPRsCmdClientInitErrorIsFatal(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{prsErr: ghClient.ErrClientInit}, "octocat", "hello", 100, 40)
+	msg := m.fetchPRsCmd("octocat", "hello", false)()
+	errMsg, ok := msg.(screen.ErrMsg)
+	if !ok {
+		t.Fatalf("expected screen.ErrMsg, got %T", msg)
+	}
+	if !errors.Is(errMsg.Err, ghClient.ErrClientInit) {
+		t.Fatalf("err = %v, want ErrClientInit", errMsg.Err)
+	}
+}
+
+func TestFetchPRsCmdOtherErrorIsRecoverable(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{prsErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	msg := m.fetchPRsCmd("octocat", "hello", false)()
+	fetchErr, ok := msg.(screen.FetchErrMsg)
+	if !ok {
+		t.Fatalf("expected screen.FetchErrMsg, got %T", msg)
+	}
+	if fetchErr.View != screen.ViewPR {
+		t.Fatalf("View = %v, want ViewPR", fetchErr.View)
+	}
+}
+
 func TestCheckoutRemapTakesEffect(t *testing.T) {
+	// No t.Parallel: keys.Configure mutates the process-wide key map.
 	t.Cleanup(func() { keys.Configure(config.Default().Keys) })
 	kc := config.Default().Keys
 	kc.Checkout = []string{"x"}
@@ -412,7 +516,38 @@ func TestCheckoutRemapTakesEffect(t *testing.T) {
 	_ = cmd2 // viewport may return a nil cmd; the message assertion above is the signal
 }
 
+func TestViewNeverPanicsOnNarrowWidths(t *testing.T) {
+	t.Parallel()
+	for w := 1; w <= 40; w++ {
+		m := withPRs(3)
+		m.width = w
+		m.height = 24
+		m.resizeViewport()
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("width=%d: View panicked: %v", w, r)
+				}
+			}()
+			_ = m.View()
+		}()
+	}
+}
+
+func TestViewTruncatesWideRuneTitleByDisplayWidth(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.width = 60
+	m.ctx.PRs[0].Title = strings.Repeat("世", 100) // each rune is 2 display cells
+	m.updateViewportContent()
+	v := m.View() // must not panic
+	if !utf8.ValidString(v) {
+		t.Fatal("View produced invalid UTF-8 (a multibyte rune was split)")
+	}
+}
+
 func TestSlashEntersSearch(t *testing.T) {
+	t.Parallel()
 	m := enterSearch(t, withTitledPRs("Fix cache", "Add docs"))
 	if !m.searching {
 		t.Fatal("expected searching=true after '/'")
@@ -423,6 +558,7 @@ func TestSlashEntersSearch(t *testing.T) {
 }
 
 func TestSlashIgnoredWhenDetailFocused(t *testing.T) {
+	t.Parallel()
 	m := withTitledPRs("Fix cache", "Add docs")
 	m.focus = focusDetails
 	if enterSearch(t, m).searching {
@@ -430,7 +566,28 @@ func TestSlashIgnoredWhenDetailFocused(t *testing.T) {
 	}
 }
 
+func TestSlashIgnoredWhileLoading(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40) // loading == true, no PRs
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	if updated.(Model).searching {
+		t.Fatal("'/' must not start search while the loading screen is shown")
+	}
+}
+
+func TestSlashIgnoredOnFatalErrorScreen(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40)
+	fe, _ := m.Update(screen.FetchErrMsg{View: screen.ViewPR, Err: errors.New("boom")})
+	m = fe.(Model) // fatal error screen: loading cleared, fetchErr set, no PRs
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	if updated.(Model).searching {
+		t.Fatal("'/' must not start search on the fatal error screen (retry key would be swallowed)")
+	}
+}
+
 func TestTypingFiltersList(t *testing.T) {
+	t.Parallel()
 	m := typeRunes(enterSearch(t, withTitledPRs("Fix cache race", "Add dark mode", "Refactor cache")), "cache")
 	if m.query != "cache" {
 		t.Fatalf("query = %q, want cache", m.query)
@@ -441,6 +598,7 @@ func TestTypingFiltersList(t *testing.T) {
 }
 
 func TestArrowsNavigateAndLettersTypeWhileSearching(t *testing.T) {
+	t.Parallel()
 	m := typeRunes(enterSearch(t, withTitledPRs("cat", "car", "cab")), "a")
 	if len(m.filtered) != 3 {
 		t.Fatalf("filtered len = %d, want 3", len(m.filtered))
@@ -456,7 +614,22 @@ func TestArrowsNavigateAndLettersTypeWhileSearching(t *testing.T) {
 	}
 }
 
+func TestUpArrowNavigatesWhileSearching(t *testing.T) {
+	t.Parallel()
+	m := typeRunes(enterSearch(t, withTitledPRs("cat", "car", "cab")), "a") // all match; cursor 0
+	dn, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = dn.(Model)
+	if m.cursor != 1 {
+		t.Fatalf("cursor = %d, want 1 after Down", m.cursor)
+	}
+	up, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if got := up.(Model).cursor; got != 0 {
+		t.Fatalf("cursor = %d, want 0 after Up", got)
+	}
+}
+
 func TestEnterCommitsFilter(t *testing.T) {
+	t.Parallel()
 	m := typeRunes(enterSearch(t, withTitledPRs("Fix cache", "Add docs")), "cache")
 	ent, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = ent.(Model)
@@ -472,6 +645,7 @@ func TestEnterCommitsFilter(t *testing.T) {
 }
 
 func TestEscCancelsFilter(t *testing.T) {
+	t.Parallel()
 	m := typeRunes(enterSearch(t, withTitledPRs("Fix cache", "Add docs")), "cache")
 	esc, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = esc.(Model)
@@ -484,6 +658,7 @@ func TestEscCancelsFilter(t *testing.T) {
 }
 
 func TestSelectedPRUsesFilteredIndex(t *testing.T) {
+	t.Parallel()
 	m := typeRunes(enterSearch(t, withTitledPRs("Add docs", "Refactor cache", "Fix tests")), "cache")
 	pr, ok := m.selectedPR()
 	if !ok || pr.Number != 2 {
@@ -492,6 +667,7 @@ func TestSelectedPRUsesFilteredIndex(t *testing.T) {
 }
 
 func TestCheckoutActsOnFilteredSelection(t *testing.T) {
+	t.Parallel()
 	m := typeRunes(enterSearch(t, withTitledPRs("Add docs", "Refactor cache", "Fix tests")), "cache")
 	ent, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = ent.(Model)
@@ -505,6 +681,7 @@ func TestCheckoutActsOnFilteredSelection(t *testing.T) {
 }
 
 func TestCheckoutNoOpWhenFilterEmpty(t *testing.T) {
+	t.Parallel()
 	m := typeRunes(enterSearch(t, withTitledPRs("Add docs", "Fix tests")), "zzz")
 	ent, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = ent.(Model)
@@ -514,6 +691,7 @@ func TestCheckoutNoOpWhenFilterEmpty(t *testing.T) {
 }
 
 func TestRefreshPreservesFilter(t *testing.T) {
+	t.Parallel()
 	m := typeRunes(enterSearch(t, withTitledPRs("Fix cache", "Add docs", "Refactor cache")), "cache")
 	ent, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = ent.(Model)
@@ -532,6 +710,7 @@ func TestRefreshPreservesFilter(t *testing.T) {
 }
 
 func TestCursorStaysValidAsFilterShrinks(t *testing.T) {
+	t.Parallel()
 	m := typeRunes(enterSearch(t, withTitledPRs("cab", "cad", "cae")), "ca")
 	m.cursor = 2
 	m = typeRunes(m, "b") // query "cab" → only "cab" matches
@@ -546,20 +725,8 @@ func TestCursorStaysValidAsFilterShrinks(t *testing.T) {
 	}
 }
 
-func TestUpArrowNavigatesWhileSearching(t *testing.T) {
-	m := typeRunes(enterSearch(t, withTitledPRs("cat", "car", "cab")), "a") // all match; cursor 0
-	dn, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	m = dn.(Model)
-	if m.cursor != 1 {
-		t.Fatalf("cursor = %d, want 1 after Down", m.cursor)
-	}
-	up, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
-	if got := up.(Model).cursor; got != 0 {
-		t.Fatalf("cursor = %d, want 0 after Up", got)
-	}
-}
-
 func TestViewSearchingShowsHintsAndQuery(t *testing.T) {
+	t.Parallel()
 	m := typeRunes(enterSearch(t, withTitledPRs("Fix cache", "Add docs")), "cache")
 	v := m.View()
 	if !strings.Contains(v, "cache") {
@@ -571,6 +738,7 @@ func TestViewSearchingShowsHintsAndQuery(t *testing.T) {
 }
 
 func TestViewCommittedShowsFilterBadge(t *testing.T) {
+	t.Parallel()
 	m := typeRunes(enterSearch(t, withTitledPRs("Fix cache", "Add docs")), "cache")
 	ent, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	v := ent.(Model).View()
@@ -583,6 +751,7 @@ func TestViewCommittedShowsFilterBadge(t *testing.T) {
 }
 
 func TestViewNoResultsMessage(t *testing.T) {
+	t.Parallel()
 	m := typeRunes(enterSearch(t, withTitledPRs("Fix cache", "Add docs")), "zzzzz")
 	if v := m.View(); !strings.Contains(v, "No PRs match") {
 		t.Fatalf("expected a no-results message, got:\n%s", v)
@@ -590,12 +759,14 @@ func TestViewNoResultsMessage(t *testing.T) {
 }
 
 func TestViewFooterHasSearchHint(t *testing.T) {
+	t.Parallel()
 	if v := withTitledPRs("Fix cache", "Add docs").View(); !strings.Contains(v, "[/] Search") {
 		t.Fatalf("expected [/] Search hint in footer, got:\n%s", v)
 	}
 }
 
 func TestViewCommittedZeroMatchesShowsBadgeAndNoResults(t *testing.T) {
+	t.Parallel()
 	m := typeRunes(enterSearch(t, withTitledPRs("Fix cache", "Add docs")), "zzz")
 	ent, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	v := ent.(Model).View()
@@ -604,31 +775,5 @@ func TestViewCommittedZeroMatchesShowsBadgeAndNoResults(t *testing.T) {
 	}
 	if !strings.Contains(v, "No PRs match") {
 		t.Fatalf("expected no-results message with badge, got:\n%s", v)
-	}
-}
-
-func TestViewNarrowWidthDoesNotPanic(t *testing.T) {
-	m := withTitledPRs("A really long pull request title that exceeds the pane", "Another")
-	m.width = 20
-	m.height = 24
-	m.resizeViewport()
-	_ = m.View() // must not panic at a narrow width
-}
-
-func TestSlashIgnoredWhileLoading(t *testing.T) {
-	m := New("octocat", "hello", 100, 40) // loading == true, no PRs
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	if updated.(Model).searching {
-		t.Fatal("'/' must not start search while the loading screen is shown")
-	}
-}
-
-func TestSlashIgnoredOnFatalErrorScreen(t *testing.T) {
-	m := New("octocat", "hello", 100, 40)
-	fe, _ := m.Update(screen.FetchErrMsg{View: screen.ViewPR, Err: errors.New("boom")})
-	m = fe.(Model) // fatal error screen: loading cleared, fetchErr set, no PRs
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	if updated.(Model).searching {
-		t.Fatal("'/' must not start search on the fatal error screen (retry key would be swallowed)")
 	}
 }

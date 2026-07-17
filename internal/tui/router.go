@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 
+	ghClient "github.com/ChristopherBilg/lazygh/internal/github"
 	"github.com/ChristopherBilg/lazygh/internal/tui/action"
 	"github.com/ChristopherBilg/lazygh/internal/tui/issue"
 	"github.com/ChristopherBilg/lazygh/internal/tui/keys"
@@ -39,11 +40,13 @@ const (
 // handler, because the three screens have different constructor signatures.)
 var perRepoViews = []view{viewPR, viewIssues, viewActions}
 
-// Model is the root router. It owns only routing state: the active view, the
+// Model is the root router. It owns only routing state: the injected GitHub
+// client (threaded into each screen that needs it), the active view, the
 // repository-selection screen, the per-repo screens (kept alive so switching
 // between them preserves each one's selection and scroll position), the sticky
 // global error, and the window dimensions it propagates.
 type Model struct {
+	client   *ghClient.Client // injected github client; satisfies repolist.Backend and pr.Backend
 	active   view
 	repoList screen.Model // persistent: survives back-navigation so the cursor is retained
 	// perRepo holds the per-repo screens (pr/issue/action), built on selection
@@ -59,10 +62,12 @@ type Model struct {
 var _ tea.Model = Model{}
 
 // NewModel returns the root model with the repository-selection screen active.
-func NewModel() Model {
+// The github client is injected and threaded into each screen that needs it.
+func NewModel(client *ghClient.Client) Model {
 	return Model{
+		client:   client,
 		active:   viewRepoList,
-		repoList: repolist.New(),
+		repoList: repolist.New(client),
 	}
 }
 
@@ -124,7 +129,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case repolist.RepoSelectedMsg:
 		m.perRepo = map[view]screen.Model{
-			viewPR:      pr.New(msg.Owner, msg.Name, m.width, m.height),
+			viewPR:      pr.New(m.client, msg.Owner, msg.Name, m.width, m.height),
 			viewIssues:  issue.New(m.width, m.height),
 			viewActions: action.New(m.width, m.height),
 		}

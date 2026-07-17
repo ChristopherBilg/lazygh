@@ -1,3 +1,5 @@
+// Command lazygh is a terminal UI for browsing GitHub repositories and their
+// pull requests, built on Bubble Tea.
 package main
 
 import (
@@ -33,12 +35,16 @@ func run() int {
 	// Load config after logging so config problems are logged, and apply it
 	// before the TUI starts. Load never fails; it falls back to defaults.
 	cfg := config.Load()
-	github.Configure(cfg.GitHub.RESTTimeout, cfg.GitHub.SubprocessTimeout, cfg.GitHub.RepoPageSize)
+	client := github.NewClient(github.ClientConfig{
+		RESTTimeout:       cfg.GitHub.RESTTimeout,
+		SubprocessTimeout: cfg.GitHub.SubprocessTimeout,
+		RepoPageSize:      cfg.GitHub.RepoPageSize,
+	})
 	styles.Configure(cfg.Theme)
 	keys.Configure(cfg.Keys)
 
 	slog.Info("lazygh starting")
-	p := tea.NewProgram(tui.NewModel(), tea.WithAltScreen())
+	p := tea.NewProgram(tui.NewModel(client), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		slog.Error("program exited with error", "err", err)
 		fmt.Fprintf(os.Stderr, "Fatal error: %v\n", err) // after TUI closes: safe

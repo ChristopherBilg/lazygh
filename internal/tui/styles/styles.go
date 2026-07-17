@@ -4,10 +4,12 @@ package styles
 
 import (
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ChristopherBilg/lazygh/internal/config"
 )
 
+// Shared lipgloss styles used across the TUI, rebuilt from the theme by Configure.
 var (
 	Base         lipgloss.Style
 	Active       lipgloss.Style
@@ -38,4 +40,15 @@ func Truncate(s string, width int) string {
 		return s
 	}
 	return lipgloss.NewStyle().MaxWidth(width).Render(s)
+}
+
+// TruncateEllipsis shortens s to fit within width display columns, appending an
+// ellipsis ("…") when it truncates. It is ANSI- and wide-character-aware (emoji,
+// CJK) and never panics on small or non-positive widths — width <= 0 returns "".
+// Use it for fixed-width list cells where an overflowing entry would break layout.
+func TruncateEllipsis(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	return ansi.Truncate(s, width, "…")
 }

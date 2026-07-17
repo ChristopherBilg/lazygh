@@ -19,6 +19,7 @@ type Model interface {
 // without importing the router package.
 type ViewID int
 
+// View identifiers for the router's top-level screens, in tab order.
 const (
 	ViewRepoList ViewID = iota
 	ViewPR

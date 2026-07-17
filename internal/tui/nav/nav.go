@@ -12,6 +12,7 @@ import (
 // Tab identifies a top-level per-repo view in the navigation bar.
 type Tab int
 
+// Tab identifiers for the per-repo navigation bar, in display order.
 const (
 	TabPRs Tab = iota
 	TabIssues

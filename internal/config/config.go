@@ -169,7 +169,7 @@ func Load() Config {
 		return cfg
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- path is the app's own XDG config path, not user-controlled input
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			// First run: scaffold a commented template so the file is easy to
@@ -251,7 +251,7 @@ func writeDefaultConfig(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) // #nosec G304 -- path is the app's own XDG config path, not user-controlled input
 	if err != nil {
 		return fmt.Errorf("create config file: %w", err)
 	}
