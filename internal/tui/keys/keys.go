@@ -19,6 +19,7 @@ type KeyMap struct {
 	TogglePane key.Binding
 	Checkout   key.Binding
 	Open       key.Binding
+	Search     key.Binding
 	NavPRs     key.Binding
 	NavIssues  key.Binding
 	NavActions key.Binding
@@ -48,6 +49,7 @@ func newKeyMap(kc config.KeysConfig) KeyMap {
 		TogglePane: b(kc.TogglePane, "toggle pane"),
 		Checkout:   b(kc.Checkout, "checkout"),
 		Open:       b(kc.Open, "open in browser"),
+		Search:     b(kc.Search, "search"),
 		NavPRs:     b(kc.NavPRs, "pull requests"),
 		NavIssues:  b(kc.NavIssues, "issues"),
 		NavActions: b(kc.NavActions, "actions"),

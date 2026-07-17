@@ -9,10 +9,12 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/ChristopherBilg/lazygh/internal/fuzzy"
 	ghClient "github.com/ChristopherBilg/lazygh/internal/github"
 	"github.com/ChristopherBilg/lazygh/internal/tui/keys"
 	"github.com/ChristopherBilg/lazygh/internal/tui/nav"
@@ -48,6 +50,10 @@ type Model struct {
 	message    string
 	spinner    spinner.Model
 	viewport   viewport.Model
+	input      textinput.Model // the "/" filter field
+	searching  bool            // input focused / capturing keystrokes
+	query      string          // applied filter; "" = no filter
+	filtered   []int           // indices into ctx.PRs, in display (ranked) order
 	width      int
 	height     int
 	ready      bool
@@ -57,17 +63,105 @@ type Model struct {
 // backed by the given github client. The repository owner/name are stored
 // immediately so the loading view can show the repository name.
 func New(backend Backend, owner, name string, width, height int) Model {
+	ti := textinput.New()
+	ti.Prompt = "/ "
+	ti.Placeholder = "filter titles"
+	ti.CharLimit = 128
+
 	m := Model{
 		backend: backend,
 		ctx:     ghClient.RepoContext{Owner: owner, Name: name},
 		focus:   focusList,
 		loading: true,
 		spinner: spinner.New(spinner.WithSpinner(spinner.Dot)),
+		input:   ti,
 		width:   width,
 		height:  height,
 	}
 	m.resizeViewport()
 	return m
+}
+
+// recompute rebuilds the filtered (visible) index list from the current query and
+// PR set, clamps the cursor into range, and refreshes the detail viewport. It is
+// the single place the visible set is derived, so filtering, refresh, and cancel
+// all stay consistent.
+func (m *Model) recompute() {
+	if m.query == "" {
+		m.filtered = make([]int, len(m.ctx.PRs))
+		for i := range m.filtered {
+			m.filtered[i] = i
+		}
+	} else {
+		titles := make([]string, len(m.ctx.PRs))
+		for i, pr := range m.ctx.PRs {
+			titles[i] = pr.Title
+		}
+		m.filtered = fuzzy.Rank(m.query, titles)
+	}
+	if m.cursor >= len(m.filtered) {
+		m.cursor = max(len(m.filtered)-1, 0)
+	}
+	m.updateViewportContent()
+	m.viewport.GotoTop()
+}
+
+// selectedPR returns the PR under the cursor within the filtered set, or false
+// when the filtered set is empty.
+func (m Model) selectedPR() (ghClient.PullRequest, bool) {
+	if len(m.filtered) == 0 {
+		return ghClient.PullRequest{}, false
+	}
+	return m.ctx.PRs[m.filtered[m.cursor]], true
+}
+
+// CapturingInput reports whether the filter field is focused and consuming keys.
+// The router consults it (via screen.InputCapturer) to suppress global keys while
+// the user is typing a filter.
+func (m Model) CapturingInput() bool { return m.searching }
+
+// updateSearch handles keys while the filter field is focused: arrow keys move the
+// selection live, Enter commits (keeps the filter, blurs the field), Esc cancels
+// (clears the filter, restores the full list), and every other key is typed into
+// the field, re-filtering on each change.
+func (m Model) updateSearch(msg tea.KeyMsg) (screen.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEnter:
+		m.searching = false
+		m.input.Blur()
+		return m, nil
+	case tea.KeyEsc:
+		m.searching = false
+		m.input.Blur()
+		m.input.Reset()
+		m.query = ""
+		m.cursor = 0
+		m.recompute()
+		return m, nil
+	case tea.KeyUp:
+		if m.cursor > 0 {
+			m.cursor--
+			m.updateViewportContent()
+			m.viewport.GotoTop()
+		}
+		return m, nil
+	case tea.KeyDown:
+		if m.cursor < len(m.filtered)-1 {
+			m.cursor++
+			m.updateViewportContent()
+			m.viewport.GotoTop()
+		}
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	if m.input.Value() != m.query {
+		m.query = m.input.Value()
+		m.cursor = 0 // best match to the top on each query change
+		m.recompute()
+	}
+	return m, cmd
 }
 
 // prDataMsg carries fetched pull-request data.
@@ -149,7 +243,21 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		return m, cmd
 
 	case tea.KeyMsg:
+		if m.searching {
+			return m.updateSearch(msg)
+		}
 		switch {
+		case key.Matches(msg, keys.Map.Search):
+			// Only open search when the list pane is actually on screen. View()
+			// returns early while loading or on a fatal load error, so entering
+			// capture then would route keys (e.g. the "r" retry) into an invisible
+			// input.
+			if m.focus == focusList && !m.loading && (m.fetchErr == nil || len(m.ctx.PRs) > 0) {
+				m.searching = true
+				m.input.SetValue(m.query) // pre-fill so "/" re-opens to refine
+				m.input.CursorEnd()
+				cmds = append(cmds, m.input.Focus())
+			}
 		case key.Matches(msg, keys.Map.TogglePane):
 			if m.focus == focusList {
 				m.focus = focusDetails
@@ -168,7 +276,7 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 			}
 		case key.Matches(msg, keys.Map.Down):
 			if m.focus == focusList {
-				if m.cursor < len(m.ctx.PRs)-1 {
+				if m.cursor < len(m.filtered)-1 {
 					m.cursor++
 					m.updateViewportContent()
 					m.viewport.GotoTop()
@@ -177,14 +285,14 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 				m.viewport.ScrollDown(1)
 			}
 		case key.Matches(msg, keys.Map.Checkout):
-			if len(m.ctx.PRs) > 0 {
+			if pr, ok := m.selectedPR(); ok {
 				m.message = "Checking out branch..."
-				cmds = append(cmds, m.checkoutCmd(m.ctx.Owner, m.ctx.Name, m.ctx.PRs[m.cursor].Number))
+				cmds = append(cmds, m.checkoutCmd(m.ctx.Owner, m.ctx.Name, pr.Number))
 			}
 		case key.Matches(msg, keys.Map.Open):
-			if len(m.ctx.PRs) > 0 {
+			if pr, ok := m.selectedPR(); ok {
 				m.message = "Opening browser..."
-				cmds = append(cmds, m.openBrowserCmd(m.ctx.Owner, m.ctx.Name, m.ctx.PRs[m.cursor].Number))
+				cmds = append(cmds, m.openBrowserCmd(m.ctx.Owner, m.ctx.Name, pr.Number))
 			}
 		case key.Matches(msg, keys.Map.Refresh):
 			// Manual refresh: bypass the cache, keep the current PRs visible.
@@ -207,11 +315,7 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		m.loading = false
 		m.refreshing = false
 		m.fetchErr = nil
-		if m.cursor >= len(m.ctx.PRs) {
-			m.cursor = max(len(m.ctx.PRs)-1, 0)
-		}
-		m.updateViewportContent()
-		m.viewport.GotoTop()
+		m.recompute() // re-apply the active query to the new data and clamp the cursor
 
 	case screen.FetchErrMsg:
 		m.loading = false
@@ -220,6 +324,14 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 
 	case statusMsg:
 		m.message = string(msg)
+
+	default:
+		// Forward any other message (e.g. the textinput's cursor-blink tick) to
+		// the filter input while it is focused, so the blink loop keeps running.
+		if m.searching {
+			m.input, cmd = m.input.Update(msg)
+			cmds = append(cmds, cmd)
+		}
 	}
 
 	m.viewport, cmd = m.viewport.Update(msg)
@@ -243,15 +355,23 @@ func (m *Model) resizeViewport() {
 		m.viewport.Width = vpWidth
 		m.viewport.Height = vpHeight
 	}
+	// The filter input sits inside the left pane; size it to the inner width
+	// (minus borders and the "/ " prompt) so a long query scrolls within the box.
+	leftPaneWidth := (m.width * 3) / 10
+	m.input.Width = max(leftPaneWidth-5, 1)
 	m.updateViewportContent()
 }
 
 func (m *Model) updateViewportContent() {
-	if len(m.ctx.PRs) == 0 {
-		m.viewport.SetContent("No open PRs.")
+	activePR, ok := m.selectedPR()
+	if !ok {
+		if m.query != "" {
+			m.viewport.SetContent("") // the list pane shows the "no match" message
+		} else {
+			m.viewport.SetContent("No open PRs.")
+		}
 		return
 	}
-	activePR := m.ctx.PRs[m.cursor]
 
 	contentStyle := lipgloss.NewStyle().Width(m.viewport.Width)
 
@@ -282,20 +402,6 @@ func (m Model) View() string {
 	leftPaneWidth := (m.width * 3) / 10
 	paneHeight := max(m.height-7, 1)
 
-	var listStr strings.Builder
-	for i, pr := range m.ctx.PRs {
-		cursorStr := "  "
-		// Reserve 2 columns for the cursor prefix so the title never overflows the
-		// pane. TruncateEllipsis is width-aware and never panics on narrow widths.
-		title := styles.TruncateEllipsis(fmt.Sprintf("#%d %s", pr.Number, pr.Title), leftPaneWidth-2)
-
-		if m.cursor == i {
-			cursorStr = "> "
-			title = styles.SelectedItem.Render(title)
-		}
-		fmt.Fprintf(&listStr, "%s%s\n", cursorStr, title)
-	}
-
 	var listBorder, detailBorder lipgloss.Style
 	if m.focus == focusList {
 		listBorder = styles.Active
@@ -305,18 +411,65 @@ func (m Model) View() string {
 		detailBorder = styles.Active
 	}
 
-	left := listBorder.Width(leftPaneWidth).Height(paneHeight).Render(listStr.String())
+	left := listBorder.Width(leftPaneWidth).Height(paneHeight).Render(m.renderList(leftPaneWidth))
 	right := detailBorder.Width(m.viewport.Width + 2).Height(paneHeight).Render(m.viewport.View())
 
 	header := fmt.Sprintf("%s\n Lazy GitHub | %s/%s \n\n", nav.Bar(nav.TabPRs), m.ctx.Owner, m.ctx.Name)
 	ui := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 
-	footerText := " [1/2/3] Views  •  [esc] Repo  •  [tab] Focus  •  [j/k] Scroll  •  [c] Checkout  •  [o] Web  •  [r] Refresh  •  [q] Quit"
+	return header + ui + "\n\n" + m.footer()
+}
+
+// renderList renders the left-pane contents: an optional search input or filter
+// badge, then the filtered PR rows (or a no-results message).
+func (m Model) renderList(paneWidth int) string {
+	var b strings.Builder
+
+	switch {
+	case m.searching:
+		b.WriteString(m.input.View())
+		b.WriteString("\n")
+	case m.query != "":
+		badge := fmt.Sprintf("filter: %q (%d/%d)", m.query, len(m.filtered), len(m.ctx.PRs))
+		b.WriteString(styles.Title.Render(styles.TruncateEllipsis(badge, paneWidth-2)))
+		b.WriteString("\n")
+	}
+
+	if len(m.filtered) == 0 {
+		if m.query != "" {
+			b.WriteString(styles.TruncateEllipsis(fmt.Sprintf("No PRs match %q.", m.query), paneWidth-2))
+		} else {
+			b.WriteString("No open PRs.")
+		}
+		return b.String()
+	}
+
+	for row, idx := range m.filtered {
+		pr := m.ctx.PRs[idx]
+		cursorStr := "  "
+		// Reserve 2 columns for the cursor prefix so the title never overflows the
+		// pane. TruncateEllipsis is width-aware and never panics on narrow widths.
+		title := styles.TruncateEllipsis(fmt.Sprintf("#%d %s", pr.Number, pr.Title), paneWidth-2)
+		if m.cursor == row {
+			cursorStr = "> "
+			title = styles.SelectedItem.Render(title)
+		}
+		fmt.Fprintf(&b, "%s%s\n", cursorStr, title)
+	}
+	return b.String()
+}
+
+// footer renders the hint bar for the current state: search hints while typing,
+// otherwise the normal action hints (with any transient status prefixed).
+func (m Model) footer() string {
+	if m.searching {
+		return fmt.Sprintf(" Search: %s  •  [esc] Cancel  •  [enter] Apply  •  [↑/↓] Move", m.query)
+	}
+	footerText := " [1/2/3] Views  •  [esc] Repo  •  [tab] Focus  •  [j/k] Scroll  •  [/] Search  •  [c] Checkout  •  [o] Web  •  [r] Refresh  •  [q] Quit"
 	if status := m.statusLine(); status != "" {
 		footerText = fmt.Sprintf(" %s | %s", status, footerText)
 	}
-
-	return header + ui + "\n\n" + footerText
+	return footerText
 }
 
 // statusLine renders the highest-priority transient status: a refresh spinner, a

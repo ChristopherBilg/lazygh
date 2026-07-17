@@ -35,6 +35,16 @@ type Addressed interface {
 	TargetView() ViewID
 }
 
+// InputCapturer is implemented by screens that can enter a mode where they must
+// receive every key (e.g. a text filter). While CapturingInput returns true, the
+// router suppresses its global key handling and forwards keys straight to the
+// active screen, so keystrokes like "1", "q", or "esc" are typed into the field
+// instead of switching views, quitting, or going back. Screens that never capture
+// input simply do not implement it.
+type InputCapturer interface {
+	CapturingInput() bool
+}
+
 // ErrMsg reports an unrecoverable error up to the router, which renders a global
 // error overlay until the user quits. Use it only for conditions the user
 // cannot recover from in-session (e.g. the GitHub client cannot be built / no

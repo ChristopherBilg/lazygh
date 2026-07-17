@@ -449,3 +449,23 @@ func TestApplyRawValidationBoundaries(t *testing.T) {
 		})
 	}
 }
+
+func TestDefaultSearchKey(t *testing.T) {
+	if got := Default().Keys.Search; !slices.Equal(got, []string{"/"}) {
+		t.Fatalf("Default search key = %v, want [/]", got)
+	}
+}
+
+func TestApplySearchOverride(t *testing.T) {
+	cfg := Default()
+	applyRaw(&cfg, raw{Keys: &rawKeys{Search: keyListPtr("f")}})
+	if !slices.Equal(cfg.Keys.Search, []string{"f"}) {
+		t.Fatalf("Search = %v, want [f] after override", cfg.Keys.Search)
+	}
+}
+
+func TestTemplateIncludesSearch(t *testing.T) {
+	if !strings.Contains(defaultConfigTemplate, "# search: [/]") {
+		t.Fatalf("default config template missing the commented search key:\n%s", defaultConfigTemplate)
+	}
+}

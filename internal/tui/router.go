@@ -84,6 +84,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "ctrl+c" { // safety hatch: always quits, before any configurable match
 			return m, tea.Quit
 		}
+		// While the active screen is capturing text input (e.g. the PR title
+		// filter), forward every key to it so keystrokes like "1", "q", or "esc"
+		// are typed into the field instead of switching views, quitting, or going
+		// back. ctrl+c above is the sole exception.
+		if s := m.activeScreen(); s != nil {
+			if c, ok := s.(screen.InputCapturer); ok && c.CapturingInput() {
+				return m.forward(msg)
+			}
+		}
 		switch {
 		case key.Matches(msg, keys.Map.Quit):
 			return m, tea.Quit
@@ -156,6 +165,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // active view.
 func (m Model) forward(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m.routeTo(m.active, msg)
+}
+
+// activeScreen returns the sub-model for the active view: the persistent repo
+// list, or the current per-repo screen (nil if the per-repo screens are not built
+// yet, i.e. before a repository is selected).
+func (m Model) activeScreen() screen.Model {
+	if m.active == viewRepoList {
+		return m.repoList
+	}
+	return m.perRepo[m.active]
 }
 
 // routeTo delivers a message to a specific view regardless of which one is

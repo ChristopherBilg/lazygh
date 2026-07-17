@@ -52,7 +52,7 @@ Before adding new GitHub features, the core application skeleton must be refacto
 Elevating the current PR implementation from a read-only list to a full workflow replacement.
 
 * **Advanced Filtering & Sorting:**
-    * Integrate `bubbles/textinput` to allow pressing `/` to fuzzy-search PR titles.
+    * Integrate `bubbles/textinput` to allow pressing `/` to fuzzy-search PR titles. ✅ (#13)
     * Add filters for "My PRs," "Needs my Review," and "Dependabot."
 * **Interactive Review Workflow:**
     * Implement a new right-pane tab view: toggle between "Description", "Files Changed" (diff view), and "Comments."
