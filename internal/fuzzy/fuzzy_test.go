@@ -54,3 +54,13 @@ func TestRankEmptyItems(t *testing.T) {
 		t.Fatalf("Rank on empty items = %v, want empty", got)
 	}
 }
+
+func TestRankAdjacencyBonusAffectsRanking(t *testing.T) {
+	// Both match "abd" only as a subsequence (not a contiguous substring):
+	// "abxd" has adjacent a,b (adjacency bonus); "axbxd" does not. The adjacent
+	// match must rank first, exercising the adjacencyBonus branch.
+	items := []string{"axbxd", "abxd"}
+	if got := Rank("abd", items); !reflect.DeepEqual(got, []int{1, 0}) {
+		t.Fatalf("Rank(abd) = %v, want [1 0] (adjacency ranks higher)", got)
+	}
+}
