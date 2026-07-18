@@ -55,7 +55,7 @@ Elevating the current PR implementation from a read-only list to a full workflow
     * Integrate `bubbles/textinput` to allow pressing `/` to fuzzy-search PR titles. ✅ (#13)
     * Add filters for "My PRs," "Needs my Review," and "Dependabot."
 * **Interactive Review Workflow:**
-    * Implement a new right-pane tab view: toggle between "Description", "Files Changed" (diff view), and "Comments."
+    * Implement a new right-pane tab view: toggle between "Description", "Files Changed" (diff view), and "Comments." ✅ (#15 — tab scaffolding + Description & Comments; "Files Changed" is a placeholder for the diff viewer below)
     * Add a keybinding (e.g., `v`) to execute `gh pr diff` and render the syntax-highlighted diff in the viewport using a library like `alecthomas/chroma`.
     * Add quick actions: `a` (Approve), `m` (Merge), `d` (Draft/Close).
 * **CI/CD Status Integration:**

@@ -59,6 +59,8 @@ their defaults. All keys are optional.
 | `nav_prs` | `1` | global (after a repo is selected) |
 | `nav_issues` | `2` | global |
 | `nav_actions` | `3` | global |
+| `prev_tab` | `[` | PR view (previous detail tab) |
+| `next_tab` | `]` | PR view (next detail tab) |
 
 Key names use Bubble Tea's vocabulary: printable characters (`c`, `o`, `/`),
 named keys (`enter`, `esc`, `tab`, `shift+tab`, `up`, `down`, `backspace`,
@@ -117,7 +119,7 @@ github:
   repo_page_size: 50       # repositories fetched for the picker (1–100)
 keys:
   checkout: [c, x]         # remap / add keys; single key or a list
-  # ...any of: quit, back, up, down, select, refresh, toggle_pane, open, search, nav_prs, nav_issues, nav_actions
+  # ...any of: quit, back, up, down, select, refresh, toggle_pane, open, search, prev_tab, next_tab, nav_prs, nav_issues, nav_actions
 theme:
   accent: "205"            # ANSI-256 index or quoted hex like "#7D56F4"
   selected: "#ff8800"

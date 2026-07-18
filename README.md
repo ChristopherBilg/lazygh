@@ -14,6 +14,7 @@
 
 - ✅ **Repository picker** — jump into any of your most recently pushed repositories
 - ✅ **Pull-request browsing** — a split-pane list + detail view of a repo's open PRs
+- ✅ **Tabbed PR detail** — switch the right pane between Description and Comments with `[`/`]` (Files Changed is a placeholder for the upcoming diff viewer)
 - ✅ **PR actions** — check a PR out locally (`c`) or open it in your browser (`o`)
 - ✅ **Fuzzy PR search** (`/`) — filter the pull-request list by title as you type
 - ✅ **Refresh with in-memory caching** (`r`) — switching tabs and going back never re-fetches unnecessarily
@@ -95,6 +96,7 @@ These are the defaults; every action can be remapped via configuration (see belo
 | `↑`/`k`, `↓`/`j` | Move the selection |
 | `/` | Fuzzy-filter the list by PR title (`esc` cancels, `enter` keeps the filter) |
 | `tab`, `shift+tab` | Toggle focus between the list and the detail pane |
+| `[`, `]` | Switch the detail pane's tab (Description / Files Changed / Comments) |
 | `c` | Check out the selected PR locally |
 | `o` | Open the selected PR in your browser |
 | `r` | Refresh the pull-request list |
