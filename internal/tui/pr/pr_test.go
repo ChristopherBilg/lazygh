@@ -13,6 +13,7 @@ import (
 	"github.com/ChristopherBilg/lazygh/internal/config"
 	ghClient "github.com/ChristopherBilg/lazygh/internal/github"
 	"github.com/ChristopherBilg/lazygh/internal/tui/keys"
+	"github.com/ChristopherBilg/lazygh/internal/tui/pr/tabs"
 	"github.com/ChristopherBilg/lazygh/internal/tui/screen"
 )
 
@@ -858,5 +859,116 @@ func TestViewCommittedZeroMatchesShowsBadgeAndNoResults(t *testing.T) {
 	}
 	if !strings.Contains(v, "No PRs match") {
 		t.Fatalf("expected no-results message with badge, got:\n%s", v)
+	}
+}
+
+func TestTabKeysCycleActiveTab(t *testing.T) {
+	t.Parallel()
+	next := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}}
+	prev := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}}
+	m := withPRs(1)
+	if m.activeTab != tabs.Description {
+		t.Fatalf("initial activeTab = %d, want Description", m.activeTab)
+	}
+	step := func(mm Model, k tea.KeyMsg) Model { u, _ := mm.Update(k); return u.(Model) }
+	m = step(m, next)
+	if m.activeTab != tabs.FilesChanged {
+		t.Fatalf("after ], activeTab = %d, want FilesChanged", m.activeTab)
+	}
+	m = step(m, next)
+	m = step(m, next) // wrap
+	if m.activeTab != tabs.Description {
+		t.Fatalf("after ]]], activeTab = %d, want Description (wrapped)", m.activeTab)
+	}
+	m = step(m, prev) // wrap back
+	if m.activeTab != tabs.Comments {
+		t.Fatalf("after [, activeTab = %d, want Comments (wrapped)", m.activeTab)
+	}
+}
+
+func TestViewRendersTabLabels(t *testing.T) {
+	t.Parallel()
+	v := withPRs(1).View()
+	for _, label := range []string{"Description", "Files Changed", "Comments"} {
+		if !strings.Contains(v, label) {
+			t.Fatalf("view missing tab label %q:\n%s", label, v)
+		}
+	}
+}
+
+func TestDescriptionTabShowsBody(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.ctx.PRs[0].Body = "the body text"
+	m.updateViewportContent()
+	if v := m.View(); !strings.Contains(v, "the body text") {
+		t.Fatalf("Description tab missing body:\n%s", v)
+	}
+}
+
+func TestFilesChangedTabShowsPlaceholder(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.activeTab = tabs.FilesChanged
+	m.updateViewportContent()
+	if v := m.View(); !strings.Contains(v, "separate work item") {
+		t.Fatalf("Files Changed tab missing placeholder:\n%s", v)
+	}
+}
+
+func TestCommentsTabLoadingState(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.activeTab = tabs.Comments
+	m.updateViewportContent()
+	if v := m.View(); !strings.Contains(v, "Loading comments") {
+		t.Fatalf("Comments tab missing loading state:\n%s", v)
+	}
+}
+
+func TestCommentsTabRendersThreadInOrder(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.activeTab = tabs.Comments
+	m.comments[1] = commentState{status: commentsLoaded, list: []ghClient.PRComment{
+		comment("alice", "first body"), comment("bob", "second body"),
+	}}
+	m.updateViewportContent()
+	v := m.View()
+	i, j := strings.Index(v, "first body"), strings.Index(v, "second body")
+	if i < 0 || j < 0 || i > j {
+		t.Fatalf("comments not rendered in order (i=%d j=%d):\n%s", i, j, v)
+	}
+	if !strings.Contains(v, "alice") || !strings.Contains(v, "bob") {
+		t.Fatalf("comments missing authors:\n%s", v)
+	}
+}
+
+func TestCommentsTabEmptyState(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.activeTab = tabs.Comments
+	m.comments[1] = commentState{status: commentsLoaded}
+	m.updateViewportContent()
+	if v := m.View(); !strings.Contains(v, "No comments yet") {
+		t.Fatalf("Comments tab missing empty state:\n%s", v)
+	}
+}
+
+func TestCommentsTabErrorState(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.activeTab = tabs.Comments
+	m.comments[1] = commentState{status: commentsErrored, err: errors.New("network down")}
+	m.updateViewportContent()
+	if v := m.View(); !strings.Contains(v, "Failed to load comments") || !strings.Contains(v, "network down") {
+		t.Fatalf("Comments tab missing error state:\n%s", v)
+	}
+}
+
+func TestFooterDocumentsTabKeys(t *testing.T) {
+	t.Parallel()
+	if v := withPRs(1).View(); !strings.Contains(v, "Tabs") {
+		t.Fatalf("footer missing tab hint:\n%s", v)
 	}
 }

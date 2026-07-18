@@ -18,6 +18,7 @@ import (
 	ghClient "github.com/ChristopherBilg/lazygh/internal/github"
 	"github.com/ChristopherBilg/lazygh/internal/tui/keys"
 	"github.com/ChristopherBilg/lazygh/internal/tui/nav"
+	"github.com/ChristopherBilg/lazygh/internal/tui/pr/tabs"
 	"github.com/ChristopherBilg/lazygh/internal/tui/screen"
 	"github.com/ChristopherBilg/lazygh/internal/tui/styles"
 )
@@ -77,6 +78,7 @@ type Model struct {
 	height     int
 	ready      bool
 	comments   map[int]commentState // per-PR comment load state, keyed by PR number
+	activeTab  tabs.Tab             // selected right-pane tab; persists across PR changes
 }
 
 // New returns a PR screen for the given repository, sized to the current window,
@@ -366,6 +368,14 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 			if !wasFetching {
 				cmds = append(cmds, m.spinner.Tick)
 			}
+		case key.Matches(msg, keys.Map.NextTab):
+			m.activeTab = m.activeTab.Next()
+			m.updateViewportContent()
+			m.viewport.GotoTop()
+		case key.Matches(msg, keys.Map.PrevTab):
+			m.activeTab = m.activeTab.Prev()
+			m.updateViewportContent()
+			m.viewport.GotoTop()
 		}
 
 	case prDataMsg:
@@ -416,7 +426,7 @@ func (m *Model) resizeViewport() {
 	contentHeight := max(m.height-headerHeight-footerHeight, 1)
 	rightPaneWidth := (m.width * 7) / 10
 	vpWidth := max(rightPaneWidth-2, 1)
-	vpHeight := max(contentHeight-2, 1)
+	vpHeight := max(contentHeight-4, 1) // -2 pane border, -2 tab bar + blank line
 
 	if !m.ready {
 		m.viewport = viewport.New(vpWidth, vpHeight)
@@ -445,17 +455,59 @@ func (m *Model) updateViewportContent() {
 
 	contentStyle := lipgloss.NewStyle().Width(m.viewport.Width)
 
-	body := activePR.Body
+	var body string
+	switch m.activeTab {
+	case tabs.FilesChanged:
+		body = filesChangedPlaceholder
+	case tabs.Comments:
+		body = m.renderComments(activePR.Number)
+	default: // tabs.Description
+		body = descriptionContent(activePR)
+	}
+
+	m.viewport.SetContent(contentStyle.Render(body))
+}
+
+// descriptionContent renders the Description tab: the PR title, state, and body.
+func descriptionContent(pr ghClient.PullRequest) string {
+	body := pr.Body
 	if body == "" {
 		body = "*No description provided.*"
 	}
+	return fmt.Sprintf("%s\nState: %s\n\n%s", styles.Title.Render(pr.Title), pr.State, body)
+}
 
-	fullText := fmt.Sprintf("%s\nState: %s\n\n%s",
-		styles.Title.Render(activePR.Title),
-		activePR.State,
-		body)
+// filesChangedPlaceholder is shown on the Files Changed tab until the diff-viewer
+// work item fills it in.
+const filesChangedPlaceholder = "Files changed\n\n" +
+	"The diff viewer for this tab is coming in a separate work item."
 
-	m.viewport.SetContent(contentStyle.Render(fullText))
+// renderComments renders the Comments tab for the given PR from its cached load
+// state: a loading placeholder, an in-tab error, an empty state, or the thread in
+// API (chronological, reading) order.
+func (m Model) renderComments(prNumber int) string {
+	st := m.comments[prNumber]
+	switch st.status {
+	case commentsErrored:
+		return styles.Error.Render(fmt.Sprintf("Failed to load comments: %v", st.err))
+	case commentsLoaded:
+		if len(st.list) == 0 {
+			return "No comments yet."
+		}
+		var b strings.Builder
+		for i, c := range st.list {
+			if i > 0 {
+				b.WriteString("\n\n")
+			}
+			fmt.Fprintf(&b, "%s · %s\n%s",
+				styles.Title.Render(c.User.Login),
+				c.CreatedAt.Format("2006-01-02 15:04"),
+				c.Body)
+		}
+		return b.String()
+	default: // commentsNotLoaded, commentsLoading
+		return "Loading comments…"
+	}
 }
 
 // View renders the split pane, a loading spinner, or a non-fatal load error.
@@ -482,7 +534,8 @@ func (m Model) View() string {
 	}
 
 	left := listBorder.Width(leftPaneWidth).Height(paneHeight).Render(m.renderList(leftPaneWidth))
-	right := detailBorder.Width(m.viewport.Width + 2).Height(paneHeight).Render(m.viewport.View())
+	bar := styles.Truncate(tabs.Bar(m.activeTab), m.viewport.Width)
+	right := detailBorder.Width(m.viewport.Width + 2).Height(paneHeight).Render(bar + "\n\n" + m.viewport.View())
 
 	header := fmt.Sprintf("%s\n Lazy GitHub | %s/%s \n\n", nav.Bar(nav.TabPRs), m.ctx.Owner, m.ctx.Name)
 	ui := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
@@ -535,7 +588,7 @@ func (m Model) footer() string {
 	if m.searching {
 		return fmt.Sprintf(" Search: %s  •  [esc] Cancel  •  [enter] Apply  •  [↑/↓] Move", m.query)
 	}
-	footerText := " [1/2/3] Views  •  [esc] Repo  •  [tab] Focus  •  [j/k] Scroll  •  [/] Search  •  [c] Checkout  •  [o] Web  •  [r] Refresh  •  [q] Quit"
+	footerText := " [1/2/3] Views  •  [esc] Repo  •  [tab] Focus  •  [[/]] Tabs  •  [j/k] Scroll  •  [/] Search  •  [c] Checkout  •  [o] Web  •  [r] Refresh  •  [q] Quit"
 	if status := m.statusLine(); status != "" {
 		footerText = fmt.Sprintf(" %s | %s", status, footerText)
 	}
