@@ -1,5 +1,5 @@
 // Package github wraps the GitHub REST API and `gh` subprocess calls lazygh
-// needs (repository listing, pull requests, checkout, open-in-browser), with a
+// needs (repository listing, pull requests, PR comments, checkout, open-in-browser), with a
 // small in-memory response cache. All outbound calls are bounded by timeouts.
 package github
 
@@ -97,6 +97,17 @@ type PullRequest struct {
 	Body   string `json:"body"`
 }
 
+// PRComment is a single conversation comment on a pull request, as returned by
+// the issues/{n}/comments REST endpoint (a PR's conversation comments are issue
+// comments in GitHub's API).
+type PRComment struct {
+	User struct {
+		Login string `json:"login"`
+	} `json:"user"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // RepoContext pairs a repository's owner/name with its fetched pull requests.
 type RepoContext struct {
 	Owner string
@@ -139,6 +150,13 @@ func reposEndpoint(pageSize int) string {
 	return fmt.Sprintf("user/repos?sort=pushed&per_page=%d", pageSize)
 }
 
+// prCommentsEndpoint builds the REST path for a PR's conversation comments. PR
+// conversation comments are issue comments, so this targets the issues endpoint.
+// per_page=100 fetches a single large page; full pagination is future work.
+func prCommentsEndpoint(owner, name string, prNumber int) string {
+	return fmt.Sprintf("repos/%s/%s/issues/%d/comments?per_page=100", owner, name, prNumber)
+}
+
 // FetchUserRepositories gets the most recently pushed-to repositories for the
 // authenticated user. per_page defaults to 50 and is overridable via ClientConfig.
 func (c *Client) FetchUserRepositories(ctx context.Context) ([]Repository, error) {
@@ -165,6 +183,20 @@ func (c *Client) FetchRepoPRs(ctx context.Context, owner, name string) (RepoCont
 		return RepoContext{}, err
 	}
 	return RepoContext{Owner: owner, Name: name, PRs: prs}, nil
+}
+
+// FetchPRComments fetches the conversation comments for the given PR of
+// owner/name, in the API's chronological (reading) order.
+func (c *Client) FetchPRComments(ctx context.Context, owner, name string, prNumber int) ([]PRComment, error) {
+	client, err := c.newRESTClient()
+	if err != nil {
+		return nil, err
+	}
+	var comments []PRComment
+	if err := client.DoWithContext(ctx, http.MethodGet, prCommentsEndpoint(owner, name, prNumber), nil, &comments); err != nil {
+		return nil, err
+	}
+	return comments, nil
 }
 
 // CheckoutPR checks out the given PR of owner/name into the current git working

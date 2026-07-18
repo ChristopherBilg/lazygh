@@ -306,3 +306,10 @@ func TestReposEndpoint(t *testing.T) {
 		t.Errorf("reposEndpoint(10) = %q, want %q", got, want)
 	}
 }
+
+func TestPRCommentsEndpoint(t *testing.T) {
+	t.Parallel()
+	if got, want := prCommentsEndpoint("octocat", "hello", 42), "repos/octocat/hello/issues/42/comments?per_page=100"; got != want {
+		t.Errorf("prCommentsEndpoint = %q, want %q", got, want)
+	}
+}

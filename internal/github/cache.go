@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -86,5 +87,14 @@ func (c *Client) RepoPRs(ctx context.Context, owner, name string, force bool) (R
 	key := "prs:" + owner + "/" + name
 	return getOrLoad(c.cache, key, force, func() (RepoContext, error) {
 		return c.FetchRepoPRs(ctx, owner, name)
+	})
+}
+
+// PRComments returns the given PR's conversation comments, served from the cache
+// when present. force bypasses the cache and refreshes the stored entry.
+func (c *Client) PRComments(ctx context.Context, owner, name string, prNumber int, force bool) ([]PRComment, error) {
+	key := fmt.Sprintf("pr-comments:%s/%s#%d", owner, name, prNumber)
+	return getOrLoad(c.cache, key, force, func() ([]PRComment, error) {
+		return c.FetchPRComments(ctx, owner, name, prNumber)
 	})
 }
