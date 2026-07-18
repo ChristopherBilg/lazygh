@@ -972,3 +972,81 @@ func TestFooterDocumentsTabKeys(t *testing.T) {
 		t.Fatalf("footer missing tab hint:\n%s", v)
 	}
 }
+
+func TestMaybeFetchCommentsSkipsNonCommentsTab(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1) // Description tab (default)
+	if cmd := m.maybeFetchComments(); cmd != nil {
+		t.Fatal("expected nil command off the Comments tab")
+	}
+	if len(m.comments) != 0 {
+		t.Fatal("expected no comment state created off the Comments tab")
+	}
+}
+
+func TestMaybeFetchCommentsSkipsLoaded(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.activeTab = tabs.Comments
+	m.comments[1] = commentState{status: commentsLoaded}
+	if cmd := m.maybeFetchComments(); cmd != nil {
+		t.Fatal("expected nil command when comments already loaded")
+	}
+}
+
+func TestMaybeFetchCommentsTriggersWhenNotLoaded(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.activeTab = tabs.Comments
+	cmd := m.maybeFetchComments()
+	if cmd == nil {
+		t.Fatal("expected a fetch command when comments not loaded")
+	}
+	if m.comments[1].status != commentsLoading {
+		t.Fatalf("comments[1].status = %d, want loading", m.comments[1].status)
+	}
+}
+
+func TestMaybeFetchCommentsRetriesAfterError(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.activeTab = tabs.Comments
+	m.comments[1] = commentState{status: commentsErrored, err: errors.New("boom")}
+	if cmd := m.maybeFetchComments(); cmd == nil {
+		t.Fatal("expected a retry command for an errored PR")
+	}
+	if m.comments[1].status != commentsLoading {
+		t.Fatalf("comments[1].status = %d, want loading after retry", m.comments[1].status)
+	}
+}
+
+func TestEnteringCommentsTabTriggersFetch(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	next := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}}
+	u, _ := m.Update(next) // -> FilesChanged (no fetch)
+	m = u.(Model)
+	if _, exists := m.comments[1]; exists {
+		t.Fatal("Files Changed tab must not fetch comments")
+	}
+	u, _ = m.Update(next) // -> Comments (fetch)
+	m = u.(Model)
+	if m.comments[1].status != commentsLoading {
+		t.Fatalf("entering Comments did not set loading; got %d", m.comments[1].status)
+	}
+}
+
+func TestSelectionChangeFetchesNewPRComments(t *testing.T) {
+	t.Parallel()
+	m := withPRs(2)
+	m.activeTab = tabs.Comments
+	m.comments[1] = commentState{status: commentsLoaded}
+	u, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown}) // cursor -> PR #2
+	m = u.(Model)
+	if m.comments[2].status != commentsLoading {
+		t.Fatalf("moving to PR #2 on Comments tab did not fetch; got %d", m.comments[2].status)
+	}
+	if m.activeTab != tabs.Comments {
+		t.Fatal("activeTab must persist across PR changes")
+	}
+}

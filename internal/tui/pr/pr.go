@@ -162,19 +162,23 @@ func (m Model) updateSearch(msg tea.KeyMsg) (screen.Model, tea.Cmd) {
 		m.recompute()
 		return m, nil
 	case tea.KeyUp:
+		var cmd tea.Cmd
 		if m.cursor > 0 {
 			m.cursor--
+			cmd = m.maybeFetchComments()
 			m.updateViewportContent()
 			m.viewport.GotoTop()
 		}
-		return m, nil
+		return m, cmd
 	case tea.KeyDown:
+		var cmd tea.Cmd
 		if m.cursor < len(m.filtered)-1 {
 			m.cursor++
+			cmd = m.maybeFetchComments()
 			m.updateViewportContent()
 			m.viewport.GotoTop()
 		}
-		return m, nil
+		return m, cmd
 	}
 
 	var cmd tea.Cmd
@@ -248,6 +252,29 @@ func (m Model) fetchCommentsCmd(prNumber int) tea.Cmd {
 		}
 		return prCommentsMsg{prNumber: prNumber, comments: cs}
 	}
+}
+
+// maybeFetchComments returns a command to load the selected PR's comments when
+// the Comments tab is active and that PR's comments are not already loaded or in
+// flight (an errored PR is retried). It marks the per-PR state loading so the view
+// shows the placeholder and no duplicate fetch is issued, and returns the fetch
+// command; it returns nil when no fetch is needed (safe to append to a cmd slice —
+// tea.Batch drops nils). Callers run updateViewportContent afterward so the
+// loading placeholder renders immediately.
+func (m *Model) maybeFetchComments() tea.Cmd {
+	if m.activeTab != tabs.Comments {
+		return nil
+	}
+	pr, ok := m.selectedPR()
+	if !ok {
+		return nil
+	}
+	switch m.comments[pr.Number].status {
+	case commentsLoading, commentsLoaded:
+		return nil
+	}
+	m.comments[pr.Number] = commentState{status: commentsLoading}
+	return m.fetchCommentsCmd(pr.Number)
 }
 
 func (m Model) checkoutCmd(owner, name string, prNumber int) tea.Cmd {
@@ -328,6 +355,7 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 			if m.focus == focusList {
 				if m.cursor > 0 {
 					m.cursor--
+					cmds = append(cmds, m.maybeFetchComments())
 					m.updateViewportContent()
 					m.viewport.GotoTop()
 				}
@@ -338,6 +366,7 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 			if m.focus == focusList {
 				if m.cursor < len(m.filtered)-1 {
 					m.cursor++
+					cmds = append(cmds, m.maybeFetchComments())
 					m.updateViewportContent()
 					m.viewport.GotoTop()
 				}
@@ -370,10 +399,12 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 			}
 		case key.Matches(msg, keys.Map.NextTab):
 			m.activeTab = m.activeTab.Next()
+			cmds = append(cmds, m.maybeFetchComments())
 			m.updateViewportContent()
 			m.viewport.GotoTop()
 		case key.Matches(msg, keys.Map.PrevTab):
 			m.activeTab = m.activeTab.Prev()
+			cmds = append(cmds, m.maybeFetchComments())
 			m.updateViewportContent()
 			m.viewport.GotoTop()
 		}
@@ -384,6 +415,10 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		m.refreshing = false
 		m.fetchErr = nil
 		m.recompute() // re-apply the active query to the new data and clamp the cursor
+		if cmd := m.maybeFetchComments(); cmd != nil {
+			m.updateViewportContent() // reflect the loading placeholder
+			cmds = append(cmds, cmd)
+		}
 
 	case screen.FetchErrMsg:
 		m.loading = false
