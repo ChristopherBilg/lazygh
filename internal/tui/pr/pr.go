@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -50,6 +51,7 @@ type Backend interface {
 	RepoPRs(ctx context.Context, owner, name string, force bool) (ghClient.RepoContext, error)
 	CheckoutPR(ctx context.Context, owner, name string, prNumber int) error
 	OpenPRInBrowser(ctx context.Context, owner, name string, prNumber int) error
+	CurrentUser(ctx context.Context) (string, error)
 }
 
 // Model is the pull-request split-pane screen.
@@ -223,6 +225,13 @@ type prDataMsg ghClient.RepoContext
 // TargetView addresses fetched PR data to the pull-request screen.
 func (prDataMsg) TargetView() screen.ViewID { return screen.ViewPR }
 
+// currentUserMsg carries the resolved authenticated-user login to the PR screen.
+type currentUserMsg string
+
+// TargetView addresses the resolved login to the pull-request screen so it is
+// delivered even after a mid-fetch tab switch.
+func (currentUserMsg) TargetView() screen.ViewID { return screen.ViewPR }
+
 // statusMsg carries a transient footer status message.
 type statusMsg string
 
@@ -266,9 +275,25 @@ func (m Model) openBrowserCmd(owner, name string, prNumber int) tea.Cmd {
 	}
 }
 
-// Init starts fetching pull requests (from cache when available) and the spinner.
+// currentUserCmd resolves the authenticated user's login (memoized in the
+// client). A failure is logged and reported as an empty login, which simply
+// leaves the user-dependent filters matching nothing.
+func (m Model) currentUserCmd() tea.Cmd {
+	return func() tea.Msg {
+		// context.Background() for now; a program-scoped context is future work.
+		login, err := m.backend.CurrentUser(context.Background())
+		if err != nil {
+			slog.Warn("could not resolve current user; My PRs / Needs my Review filters will be empty", "err", err)
+			return currentUserMsg("")
+		}
+		return currentUserMsg(login)
+	}
+}
+
+// Init starts fetching pull requests (from cache when available), resolving
+// the current user, and the spinner.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.fetchPRsCmd(m.ctx.Owner, m.ctx.Name, false), m.spinner.Tick)
+	return tea.Batch(m.fetchPRsCmd(m.ctx.Owner, m.ctx.Name, false), m.currentUserCmd(), m.spinner.Tick)
 }
 
 // Update handles focus, navigation, PR actions, and data messages.
@@ -369,6 +394,13 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		m.refreshing = false
 		m.fetchErr = nil
 		m.recompute() // re-apply the active query to the new data and clamp the cursor
+
+	case currentUserMsg:
+		m.currentUser = string(msg)
+		// Re-apply an active user-dependent filter now that the login is known.
+		if m.filter == filterMine || m.filter == filterNeedsReview {
+			m.recompute()
+		}
 
 	case screen.FetchErrMsg:
 		m.loading = false

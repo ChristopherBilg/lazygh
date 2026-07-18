@@ -22,10 +22,12 @@ import (
 // returns checkoutErr. This lets checkout/open/fetch result handling be
 // exercised without spawning `gh` or requiring a local git repository.
 type fakeBackend struct {
-	checkoutErr error
-	prs         []ghClient.PullRequest
-	prsErr      error
-	openErr     error
+	checkoutErr    error
+	prs            []ghClient.PullRequest
+	prsErr         error
+	openErr        error
+	currentUser    string
+	currentUserErr error
 }
 
 func (f fakeBackend) RepoPRs(_ context.Context, owner, name string, _ bool) (ghClient.RepoContext, error) {
@@ -35,6 +37,10 @@ func (f fakeBackend) RepoPRs(_ context.Context, owner, name string, _ bool) (ghC
 func (f fakeBackend) CheckoutPR(_ context.Context, _, _ string, _ int) error { return f.checkoutErr }
 
 func (f fakeBackend) OpenPRInBrowser(_ context.Context, _, _ string, _ int) error { return f.openErr }
+
+func (f fakeBackend) CurrentUser(context.Context) (string, error) {
+	return f.currentUser, f.currentUserErr
+}
 
 // withPRs builds a loaded PR screen with n synthetic pull requests.
 func withPRs(n int) Model {
@@ -870,5 +876,104 @@ func TestFilterAllUnchanged(t *testing.T) {
 	m.recompute()
 	if got := len(m.filtered); got != 3 {
 		t.Fatalf("filtered len = %d, want 3", got)
+	}
+}
+
+func TestCurrentUserMsgStoresLogin(t *testing.T) {
+	t.Parallel()
+	m := withPRs(2)
+	updated, _ := m.Update(currentUserMsg("octocat"))
+	if got := updated.(Model).currentUser; got != "octocat" {
+		t.Fatalf("currentUser = %q, want octocat", got)
+	}
+}
+
+func TestCurrentUserMsgReappliesActiveFilter(t *testing.T) {
+	t.Parallel()
+	m := withPRs(0)
+	m.ctx.PRs = []ghClient.PullRequest{
+		{Number: 1, Title: "a", User: ghClient.User{Login: "octocat"}},
+		{Number: 2, Title: "b", User: ghClient.User{Login: "hubot"}},
+	}
+	m.filter = filterMine
+	m.recompute() // currentUser still "" → nothing matches
+	if len(m.filtered) != 0 {
+		t.Fatalf("precondition: want 0 filtered before login resolves, got %d", len(m.filtered))
+	}
+	updated, _ := m.Update(currentUserMsg("octocat"))
+	if got := prNumbers(updated.(Model)); !slices.Equal(got, []int{1}) {
+		t.Fatalf("filtered = %v, want [1] after login resolves", got)
+	}
+}
+
+func TestCurrentUserMsgSkipsRecomputeWhenFilterNotUserDependent(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.filter = filterAll
+	m.ctx.PRs[0].Body = strings.Repeat("line\n", 200) // tall body so it can scroll
+	m.updateViewportContent()
+	m.viewport.ScrollDown(50)
+	if m.viewport.AtTop() {
+		t.Fatal("precondition: expected viewport scrolled away from top")
+	}
+	updated, _ := m.Update(currentUserMsg("octocat"))
+	um := updated.(Model)
+	if um.currentUser != "octocat" {
+		t.Fatalf("currentUser = %q, want octocat (login still stored)", um.currentUser)
+	}
+	if um.viewport.AtTop() {
+		t.Fatal("filterAll: currentUserMsg must not recompute (viewport scroll should be preserved)")
+	}
+}
+
+func TestCurrentUserMsgTargetView(t *testing.T) {
+	t.Parallel()
+	if currentUserMsg("x").TargetView() != screen.ViewPR {
+		t.Fatal("currentUserMsg must target the PR view")
+	}
+}
+
+func TestInitEmitsCurrentUserCmd(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{currentUser: "octocat"}, "octocat", "hello", 100, 40)
+	msg := m.Init()()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("Init() msg = %T, want tea.BatchMsg", msg)
+	}
+	var sawCurrentUser bool
+	for _, c := range batch {
+		if _, ok := c().(currentUserMsg); ok {
+			sawCurrentUser = true
+		}
+	}
+	if !sawCurrentUser {
+		t.Fatal("Init did not emit a command resolving the current user")
+	}
+}
+
+func TestCurrentUserCmdReturnsLogin(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{currentUser: "octocat"}, "octocat", "hello", 100, 40)
+	msg := m.currentUserCmd()()
+	cu, ok := msg.(currentUserMsg)
+	if !ok {
+		t.Fatalf("got %T, want currentUserMsg", msg)
+	}
+	if string(cu) != "octocat" {
+		t.Fatalf("login = %q, want octocat", string(cu))
+	}
+}
+
+func TestCurrentUserCmdEmptyOnError(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{currentUserErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	msg := m.currentUserCmd()()
+	cu, ok := msg.(currentUserMsg)
+	if !ok {
+		t.Fatalf("got %T, want currentUserMsg", msg)
+	}
+	if string(cu) != "" {
+		t.Fatalf("login = %q, want empty on error", string(cu))
 	}
 }
