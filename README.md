@@ -16,6 +16,7 @@
 - ✅ **Pull-request browsing** — a split-pane list + detail view of a repo's open PRs
 - ✅ **PR actions** — check a PR out locally (`c`) or open it in your browser (`o`)
 - ✅ **Fuzzy PR search** (`/`) — filter the pull-request list by title as you type
+- ✅ **Quick PR filters** — one keystroke to focus on **My PRs** (`m`), **Needs my Review** (`v`), or **Dependabot** (`d`); press the active key again to clear
 - ✅ **Refresh with in-memory caching** (`r`) — switching tabs and going back never re-fetches unnecessarily
 - ✅ **Fully configurable** — remap every keybinding, recolor the theme, and tune network timeouts from one optional YAML file
 - ✅ **TUI-safe logging** — diagnostics go to a log file, never to the screen, so the interface is never corrupted
@@ -94,6 +95,9 @@ These are the defaults; every action can be remapped via configuration (see belo
 |---|---|
 | `↑`/`k`, `↓`/`j` | Move the selection |
 | `/` | Fuzzy-filter the list by PR title (`esc` cancels, `enter` keeps the filter) |
+| `m` | Filter to PRs you authored (press again to clear) |
+| `v` | Filter to PRs awaiting your review (press again to clear) |
+| `d` | Filter to Dependabot PRs (press again to clear) |
 | `tab`, `shift+tab` | Toggle focus between the list and the detail pane |
 | `c` | Check out the selected PR locally |
 | `o` | Open the selected PR in your browser |
