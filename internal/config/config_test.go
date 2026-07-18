@@ -469,3 +469,36 @@ func TestTemplateIncludesSearch(t *testing.T) {
 		t.Fatalf("default config template missing the commented search key:\n%s", defaultConfigTemplate)
 	}
 }
+
+func TestDefaultFilterKeys(t *testing.T) {
+	t.Parallel()
+	def := Default()
+	if !slices.Equal(def.Keys.FilterMine, []string{"m"}) {
+		t.Errorf("FilterMine default = %v, want [m]", def.Keys.FilterMine)
+	}
+	if !slices.Equal(def.Keys.FilterReview, []string{"v"}) {
+		t.Errorf("FilterReview default = %v, want [v]", def.Keys.FilterReview)
+	}
+	if !slices.Equal(def.Keys.FilterDependabot, []string{"d"}) {
+		t.Errorf("FilterDependabot default = %v, want [d]", def.Keys.FilterDependabot)
+	}
+}
+
+func TestApplyKeysFilterBindings(t *testing.T) {
+	t.Parallel()
+	cfg := Default()
+	applyRaw(&cfg, raw{Keys: &rawKeys{
+		FilterMine:       keyListPtr("a"),
+		FilterReview:     keyListPtr("b"),
+		FilterDependabot: keyListPtr("c"),
+	}})
+	if !slices.Equal(cfg.Keys.FilterMine, []string{"a"}) {
+		t.Errorf("FilterMine = %v, want [a]", cfg.Keys.FilterMine)
+	}
+	if !slices.Equal(cfg.Keys.FilterReview, []string{"b"}) {
+		t.Errorf("FilterReview = %v, want [b]", cfg.Keys.FilterReview)
+	}
+	if !slices.Equal(cfg.Keys.FilterDependabot, []string{"c"}) {
+		t.Errorf("FilterDependabot = %v, want [c]", cfg.Keys.FilterDependabot)
+	}
+}
