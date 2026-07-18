@@ -31,11 +31,30 @@ const (
 	focusDetails
 )
 
+// commentStatus tracks the lifecycle of a PR's lazily-loaded comments.
+type commentStatus int
+
+// Comment load lifecycle states, in the order a PR's comments progress through.
+const (
+	commentsNotLoaded commentStatus = iota
+	commentsLoading
+	commentsLoaded
+	commentsErrored
+)
+
+// commentState is the per-PR comment load state stored in Model.comments.
+type commentState struct {
+	status commentStatus
+	list   []ghClient.PRComment
+	err    error
+}
+
 // Backend is the subset of the github client the PR screen needs.
 type Backend interface {
 	RepoPRs(ctx context.Context, owner, name string, force bool) (ghClient.RepoContext, error)
 	CheckoutPR(ctx context.Context, owner, name string, prNumber int) error
 	OpenPRInBrowser(ctx context.Context, owner, name string, prNumber int) error
+	PRComments(ctx context.Context, owner, name string, prNumber int, force bool) ([]ghClient.PRComment, error)
 }
 
 // Model is the pull-request split-pane screen.
@@ -57,6 +76,7 @@ type Model struct {
 	width      int
 	height     int
 	ready      bool
+	comments   map[int]commentState // per-PR comment load state, keyed by PR number
 }
 
 // New returns a PR screen for the given repository, sized to the current window,
@@ -69,14 +89,15 @@ func New(backend Backend, owner, name string, width, height int) Model {
 	ti.CharLimit = 128
 
 	m := Model{
-		backend: backend,
-		ctx:     ghClient.RepoContext{Owner: owner, Name: name},
-		focus:   focusList,
-		loading: true,
-		spinner: spinner.New(spinner.WithSpinner(spinner.Dot)),
-		input:   ti,
-		width:   width,
-		height:  height,
+		backend:  backend,
+		ctx:      ghClient.RepoContext{Owner: owner, Name: name},
+		focus:    focusList,
+		loading:  true,
+		spinner:  spinner.New(spinner.WithSpinner(spinner.Dot)),
+		input:    ti,
+		width:    width,
+		height:   height,
+		comments: make(map[int]commentState),
 	}
 	m.resizeViewport()
 	return m
@@ -187,6 +208,43 @@ func (m Model) fetchPRsCmd(owner, name string, force bool) tea.Cmd {
 			return screen.FetchErrMsg{View: screen.ViewPR, Err: err}
 		}
 		return prDataMsg(data)
+	}
+}
+
+// prCommentsMsg carries fetched conversation comments for a specific PR.
+type prCommentsMsg struct {
+	prNumber int
+	comments []ghClient.PRComment
+}
+
+// TargetView addresses fetched comments to the pull-request screen.
+func (prCommentsMsg) TargetView() screen.ViewID { return screen.ViewPR }
+
+// prCommentsErrMsg reports a failed comment fetch for a specific PR; it renders
+// inside the Comments tab rather than as a global error.
+type prCommentsErrMsg struct {
+	prNumber int
+	err      error
+}
+
+// TargetView addresses the comment error to the pull-request screen.
+func (prCommentsErrMsg) TargetView() screen.ViewID { return screen.ViewPR }
+
+// fetchCommentsCmd fetches the given PR's conversation comments. A client-init
+// failure is fatal (ErrMsg); any other failure renders inside the Comments tab
+// (prCommentsErrMsg).
+func (m Model) fetchCommentsCmd(prNumber int) tea.Cmd {
+	owner, name := m.ctx.Owner, m.ctx.Name
+	return func() tea.Msg {
+		// context.Background() for now; a program-scoped context is future work.
+		cs, err := m.backend.PRComments(context.Background(), owner, name, prNumber, false)
+		if err != nil {
+			if errors.Is(err, ghClient.ErrClientInit) {
+				return screen.ErrMsg{Err: err}
+			}
+			return prCommentsErrMsg{prNumber: prNumber, err: err}
+		}
+		return prCommentsMsg{prNumber: prNumber, comments: cs}
 	}
 }
 
@@ -324,6 +382,18 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 
 	case statusMsg:
 		m.message = string(msg)
+
+	case prCommentsMsg:
+		m.comments[msg.prNumber] = commentState{status: commentsLoaded, list: msg.comments}
+		if pr, ok := m.selectedPR(); ok && pr.Number == msg.prNumber {
+			m.updateViewportContent()
+		}
+
+	case prCommentsErrMsg:
+		m.comments[msg.prNumber] = commentState{status: commentsErrored, err: msg.err}
+		if pr, ok := m.selectedPR(); ok && pr.Number == msg.prNumber {
+			m.updateViewportContent()
+		}
 
 	default:
 		// Forward any other message (e.g. the textinput's cursor-blink tick) to

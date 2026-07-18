@@ -25,6 +25,8 @@ type fakeBackend struct {
 	prs         []ghClient.PullRequest
 	prsErr      error
 	openErr     error
+	comments    []ghClient.PRComment
+	commentsErr error
 }
 
 func (f fakeBackend) RepoPRs(_ context.Context, owner, name string, _ bool) (ghClient.RepoContext, error) {
@@ -34,6 +36,18 @@ func (f fakeBackend) RepoPRs(_ context.Context, owner, name string, _ bool) (ghC
 func (f fakeBackend) CheckoutPR(_ context.Context, _, _ string, _ int) error { return f.checkoutErr }
 
 func (f fakeBackend) OpenPRInBrowser(_ context.Context, _, _ string, _ int) error { return f.openErr }
+
+func (f fakeBackend) PRComments(_ context.Context, _, _ string, _ int, _ bool) ([]ghClient.PRComment, error) {
+	return f.comments, f.commentsErr
+}
+
+// comment builds a PRComment with the given author login and body.
+func comment(login, body string) ghClient.PRComment {
+	var c ghClient.PRComment
+	c.User.Login = login
+	c.Body = body
+	return c
+}
 
 // withPRs builds a loaded PR screen with n synthetic pull requests.
 func withPRs(n int) Model {
@@ -488,6 +502,75 @@ func TestFetchPRsCmdOtherErrorIsRecoverable(t *testing.T) {
 	}
 	if fetchErr.View != screen.ViewPR {
 		t.Fatalf("View = %v, want ViewPR", fetchErr.View)
+	}
+}
+
+func TestFetchCommentsCmdSuccess(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{comments: []ghClient.PRComment{comment("alice", "hi")}}, "octocat", "hello", 100, 40)
+	msg := m.fetchCommentsCmd(7)()
+	got, ok := msg.(prCommentsMsg)
+	if !ok {
+		t.Fatalf("expected prCommentsMsg, got %T", msg)
+	}
+	if got.prNumber != 7 || len(got.comments) != 1 || got.comments[0].User.Login != "alice" {
+		t.Fatalf("unexpected prCommentsMsg: %+v", got)
+	}
+}
+
+func TestFetchCommentsCmdClientInitFatal(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{commentsErr: ghClient.ErrClientInit}, "octocat", "hello", 100, 40)
+	if _, ok := m.fetchCommentsCmd(7)().(screen.ErrMsg); !ok {
+		t.Fatalf("expected screen.ErrMsg for ErrClientInit")
+	}
+}
+
+func TestFetchCommentsCmdOtherError(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{commentsErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	got, ok := m.fetchCommentsCmd(7)().(prCommentsErrMsg)
+	if !ok {
+		t.Fatalf("expected prCommentsErrMsg, got non-error message")
+	}
+	if got.prNumber != 7 {
+		t.Fatalf("prNumber = %d, want 7", got.prNumber)
+	}
+}
+
+func TestCommentMsgsTargetPRView(t *testing.T) {
+	t.Parallel()
+	if (prCommentsMsg{}).TargetView() != screen.ViewPR || (prCommentsErrMsg{}).TargetView() != screen.ViewPR {
+		t.Fatal("comment messages must target the PR view")
+	}
+}
+
+func TestPRCommentsMsgStoresLoadedState(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	updated, _ := m.Update(prCommentsMsg{prNumber: 1, comments: []ghClient.PRComment{comment("bob", "yo")}})
+	st := updated.(Model).comments[1]
+	if st.status != commentsLoaded || len(st.list) != 1 {
+		t.Fatalf("comments[1] = %+v, want loaded with 1 item", st)
+	}
+}
+
+func TestPRCommentsErrMsgStoresErrorState(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	updated, _ := m.Update(prCommentsErrMsg{prNumber: 1, err: errors.New("boom")})
+	if st := updated.(Model).comments[1]; st.status != commentsErrored || st.err == nil {
+		t.Fatalf("comments[1] = %+v, want errored with err", st)
+	}
+}
+
+func TestPRCommentsMsgStoresForNonSelectedPR(t *testing.T) {
+	t.Parallel()
+	m := withPRs(2) // cursor on PR #1; PR #2 is not selected
+	updated, _ := m.Update(prCommentsMsg{prNumber: 2, comments: []ghClient.PRComment{comment("carol", "later")}})
+	st := updated.(Model).comments[2]
+	if st.status != commentsLoaded || len(st.list) != 1 {
+		t.Fatalf("comments[2] = %+v, want loaded with 1 item for the non-selected PR", st)
 	}
 }
 
