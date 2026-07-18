@@ -23,6 +23,8 @@ type KeyMap struct {
 	NavPRs     key.Binding
 	NavIssues  key.Binding
 	NavActions key.Binding
+	PrevTab    key.Binding
+	NextTab    key.Binding
 }
 
 // Map is the process-wide key map. It starts at defaults so any code or test
@@ -53,5 +55,7 @@ func newKeyMap(kc config.KeysConfig) KeyMap {
 		NavPRs:     b(kc.NavPRs, "pull requests"),
 		NavIssues:  b(kc.NavIssues, "issues"),
 		NavActions: b(kc.NavActions, "actions"),
+		PrevTab:    b(kc.PrevTab, "previous tab"),
+		NextTab:    b(kc.NextTab, "next tab"),
 	}
 }

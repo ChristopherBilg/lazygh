@@ -469,3 +469,32 @@ func TestTemplateIncludesSearch(t *testing.T) {
 		t.Fatalf("default config template missing the commented search key:\n%s", defaultConfigTemplate)
 	}
 }
+
+func TestDefaultTabKeys(t *testing.T) {
+	def := Default()
+	if !slices.Equal(def.Keys.PrevTab, []string{"["}) {
+		t.Errorf("PrevTab default = %v, want [[]", def.Keys.PrevTab)
+	}
+	if !slices.Equal(def.Keys.NextTab, []string{"]"}) {
+		t.Errorf("NextTab default = %v, want []]", def.Keys.NextTab)
+	}
+}
+
+func TestApplyTabKeyOverrides(t *testing.T) {
+	cfg := Default()
+	applyRaw(&cfg, raw{Keys: &rawKeys{PrevTab: keyListPtr("p"), NextTab: keyListPtr("n")}})
+	if !slices.Equal(cfg.Keys.PrevTab, []string{"p"}) {
+		t.Errorf("PrevTab = %v, want [p]", cfg.Keys.PrevTab)
+	}
+	if !slices.Equal(cfg.Keys.NextTab, []string{"n"}) {
+		t.Errorf("NextTab = %v, want [n]", cfg.Keys.NextTab)
+	}
+}
+
+func TestTemplateIncludesTabKeys(t *testing.T) {
+	for _, want := range []string{`# prev_tab: ["["]`, `# next_tab: ["]"]`} {
+		if !strings.Contains(defaultConfigTemplate, want) {
+			t.Fatalf("default config template missing %q:\n%s", want, defaultConfigTemplate)
+		}
+	}
+}

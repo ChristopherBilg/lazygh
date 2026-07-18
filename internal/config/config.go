@@ -49,6 +49,8 @@ type KeysConfig struct {
 	NavPRs     []string
 	NavIssues  []string
 	NavActions []string
+	PrevTab    []string
+	NextTab    []string
 }
 
 // ThemeConfig holds the resolved, validated color per semantic role.
@@ -83,6 +85,8 @@ func Default() Config {
 			NavPRs:     []string{"1"},
 			NavIssues:  []string{"2"},
 			NavActions: []string{"3"},
+			PrevTab:    []string{"["},
+			NextTab:    []string{"]"},
 		},
 		Theme: ThemeConfig{
 			Accent:   "62",
@@ -135,6 +139,8 @@ type rawKeys struct {
 	NavPRs     *keyList `yaml:"nav_prs"`
 	NavIssues  *keyList `yaml:"nav_issues"`
 	NavActions *keyList `yaml:"nav_actions"`
+	PrevTab    *keyList `yaml:"prev_tab"`
+	NextTab    *keyList `yaml:"next_tab"`
 }
 
 type rawTheme struct {
@@ -236,6 +242,8 @@ keys:
   # nav_prs: ["1"]
   # nav_issues: ["2"]
   # nav_actions: ["3"]
+  # prev_tab: ["["]
+  # next_tab: ["]"]
 theme:
   # accent: "62"             # active borders, title bar, boxes
   # border: "240"            # inactive pane borders
@@ -324,6 +332,8 @@ func applyKeys(cfg *Config, rk *rawKeys) {
 		{"nav_prs", rk.NavPRs, &cfg.Keys.NavPRs},
 		{"nav_issues", rk.NavIssues, &cfg.Keys.NavIssues},
 		{"nav_actions", rk.NavActions, &cfg.Keys.NavActions},
+		{"prev_tab", rk.PrevTab, &cfg.Keys.PrevTab},
+		{"next_tab", rk.NextTab, &cfg.Keys.NextTab},
 	} {
 		if b.raw == nil {
 			continue
