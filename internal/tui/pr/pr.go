@@ -31,6 +31,20 @@ const (
 	focusDetails
 )
 
+// prFilter is the active quick filter applied to the PR list.
+type prFilter int
+
+// Quick-filter values. filterAll shows every PR.
+const (
+	filterAll prFilter = iota
+	filterMine
+	filterNeedsReview
+	filterDependabot
+)
+
+// dependabotLogin is the author login GitHub assigns to Dependabot PRs.
+const dependabotLogin = "dependabot[bot]"
+
 // Backend is the subset of the github client the PR screen needs.
 type Backend interface {
 	RepoPRs(ctx context.Context, owner, name string, force bool) (ghClient.RepoContext, error)
@@ -40,23 +54,25 @@ type Backend interface {
 
 // Model is the pull-request split-pane screen.
 type Model struct {
-	backend    Backend
-	ctx        ghClient.RepoContext
-	cursor     int
-	focus      focus
-	loading    bool
-	refreshing bool
-	fetchErr   error
-	message    string
-	spinner    spinner.Model
-	viewport   viewport.Model
-	input      textinput.Model // the "/" filter field
-	searching  bool            // input focused / capturing keystrokes
-	query      string          // applied filter; "" = no filter
-	filtered   []int           // indices into ctx.PRs, in display (ranked) order
-	width      int
-	height     int
-	ready      bool
+	backend     Backend
+	ctx         ghClient.RepoContext
+	cursor      int
+	focus       focus
+	loading     bool
+	refreshing  bool
+	fetchErr    error
+	message     string
+	spinner     spinner.Model
+	viewport    viewport.Model
+	input       textinput.Model // the "/" filter field
+	searching   bool            // input focused / capturing keystrokes
+	query       string          // applied filter; "" = no filter
+	filter      prFilter        // active quick filter; filterAll = no filter
+	currentUser string          // authenticated user's login; "" until resolved
+	filtered    []int           // indices into ctx.PRs, in display (ranked) order
+	width       int
+	height      int
+	ready       bool
 }
 
 // New returns a PR screen for the given repository, sized to the current window,
@@ -82,22 +98,59 @@ func New(backend Backend, owner, name string, width, height int) Model {
 	return m
 }
 
-// recompute rebuilds the filtered (visible) index list from the current query and
-// PR set, clamps the cursor into range, and refreshes the detail viewport. It is
-// the single place the visible set is derived, so filtering, refresh, and cancel
-// all stay consistent.
+// filterMatch reports whether pr belongs to the active quick filter. The
+// user-dependent filters never match while the current user is unresolved.
+func (m Model) filterMatch(pr ghClient.PullRequest) bool {
+	switch m.filter {
+	case filterMine:
+		return m.currentUser != "" && strings.EqualFold(pr.User.Login, m.currentUser)
+	case filterNeedsReview:
+		if m.currentUser == "" {
+			return false
+		}
+		for _, r := range pr.RequestedReviewers {
+			if strings.EqualFold(r.Login, m.currentUser) {
+				return true
+			}
+		}
+		return false
+	case filterDependabot:
+		return strings.EqualFold(pr.User.Login, dependabotLogin)
+	default: // filterAll
+		return true
+	}
+}
+
+// filterIndices returns the indices of ctx.PRs matching the active quick filter,
+// in natural (unranked) order.
+func (m Model) filterIndices() []int {
+	out := make([]int, 0, len(m.ctx.PRs))
+	for i := range m.ctx.PRs {
+		if m.filterMatch(m.ctx.PRs[i]) {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// recompute rebuilds the filtered (visible) index list from the current query,
+// active quick filter, and PR set, clamps the cursor into range, and refreshes
+// the detail viewport. It is the single place the visible set is derived, so
+// filtering, refresh, and cancel all stay consistent.
 func (m *Model) recompute() {
+	base := m.filterIndices()
 	if m.query == "" {
-		m.filtered = make([]int, len(m.ctx.PRs))
-		for i := range m.filtered {
-			m.filtered[i] = i
-		}
+		m.filtered = base
 	} else {
-		titles := make([]string, len(m.ctx.PRs))
-		for i, pr := range m.ctx.PRs {
-			titles[i] = pr.Title
+		titles := make([]string, len(base))
+		for i, idx := range base {
+			titles[i] = m.ctx.PRs[idx].Title
 		}
-		m.filtered = fuzzy.Rank(m.query, titles)
+		ranked := fuzzy.Rank(m.query, titles) // indices into base
+		m.filtered = make([]int, len(ranked))
+		for i, r := range ranked {
+			m.filtered[i] = base[r]
+		}
 	}
 	if m.cursor >= len(m.filtered) {
 		m.cursor = max(len(m.filtered)-1, 0)

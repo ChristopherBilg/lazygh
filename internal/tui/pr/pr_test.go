@@ -3,6 +3,7 @@ package pr
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -775,5 +776,99 @@ func TestViewCommittedZeroMatchesShowsBadgeAndNoResults(t *testing.T) {
 	}
 	if !strings.Contains(v, "No PRs match") {
 		t.Fatalf("expected no-results message with badge, got:\n%s", v)
+	}
+}
+
+// prNumbers returns the PR numbers currently visible, in display order.
+func prNumbers(m Model) []int {
+	out := make([]int, len(m.filtered))
+	for i, idx := range m.filtered {
+		out[i] = m.ctx.PRs[idx].Number
+	}
+	return out
+}
+
+func TestFilterMine(t *testing.T) {
+	t.Parallel()
+	m := withPRs(0)
+	m.ctx.PRs = []ghClient.PullRequest{
+		{Number: 1, Title: "a", User: ghClient.User{Login: "octocat"}},
+		{Number: 2, Title: "b", User: ghClient.User{Login: "hubot"}},
+		{Number: 3, Title: "c", User: ghClient.User{Login: "OctoCat"}},
+	}
+	m.currentUser = "octocat"
+	m.filter = filterMine
+	m.recompute()
+	if got := prNumbers(m); !slices.Equal(got, []int{1, 3}) {
+		t.Fatalf("filtered = %v, want [1 3] (case-insensitive author match)", got)
+	}
+}
+
+func TestFilterNeedsReview(t *testing.T) {
+	t.Parallel()
+	m := withPRs(0)
+	m.ctx.PRs = []ghClient.PullRequest{
+		{Number: 1, Title: "a", RequestedReviewers: []ghClient.User{{Login: "octocat"}}},
+		{Number: 2, Title: "b", RequestedReviewers: []ghClient.User{{Login: "hubot"}}},
+		{Number: 3, Title: "c"},
+	}
+	m.currentUser = "octocat"
+	m.filter = filterNeedsReview
+	m.recompute()
+	if got := prNumbers(m); !slices.Equal(got, []int{1}) {
+		t.Fatalf("filtered = %v, want [1]", got)
+	}
+}
+
+func TestFilterDependabot(t *testing.T) {
+	t.Parallel()
+	m := withPRs(0)
+	m.ctx.PRs = []ghClient.PullRequest{
+		{Number: 1, Title: "a", User: ghClient.User{Login: "dependabot[bot]"}},
+		{Number: 2, Title: "b", User: ghClient.User{Login: "octocat"}},
+	}
+	m.filter = filterDependabot
+	m.recompute()
+	if got := prNumbers(m); !slices.Equal(got, []int{1}) {
+		t.Fatalf("filtered = %v, want [1]", got)
+	}
+}
+
+func TestFilterUserDependentEmptyWhenLoginUnresolved(t *testing.T) {
+	t.Parallel()
+	m := withPRs(0)
+	m.ctx.PRs = []ghClient.PullRequest{{Number: 1, User: ghClient.User{Login: "octocat"}}}
+	m.currentUser = ""
+	m.filter = filterMine
+	m.recompute()
+	if got := prNumbers(m); len(got) != 0 {
+		t.Fatalf("filtered = %v, want empty when login unresolved", got)
+	}
+}
+
+func TestFilterComposesWithSearch(t *testing.T) {
+	t.Parallel()
+	m := withPRs(0)
+	m.ctx.PRs = []ghClient.PullRequest{
+		{Number: 1, Title: "add auth", User: ghClient.User{Login: "octocat"}},
+		{Number: 2, Title: "fix auth bug", User: ghClient.User{Login: "octocat"}},
+		{Number: 3, Title: "fix auth bug", User: ghClient.User{Login: "hubot"}},
+	}
+	m.currentUser = "octocat"
+	m.filter = filterMine
+	m.query = "bug"
+	m.recompute()
+	if got := prNumbers(m); !slices.Equal(got, []int{2}) {
+		t.Fatalf("filtered = %v, want [2] (filter ∩ search)", got)
+	}
+}
+
+func TestFilterAllUnchanged(t *testing.T) {
+	t.Parallel()
+	m := withPRs(3)
+	m.filter = filterAll
+	m.recompute()
+	if got := len(m.filtered); got != 3 {
+		t.Fatalf("filtered len = %d, want 3", got)
 	}
 }
