@@ -454,8 +454,15 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		}
 	}
 
-	m.viewport, cmd = m.viewport.Update(msg)
-	cmds = append(cmds, cmd)
+	// Forward to the detail viewport, but only let it consume key presses when the
+	// detail pane is focused. Otherwise the viewport's built-in bindings (j/k and
+	// d/u/f/b/space/pgup/pgdn) would scroll the detail pane while the user is
+	// navigating the list or toggling a filter — e.g. "d" (Dependabot filter) also
+	// triggers the viewport's half-page-down. Non-key messages (mouse, etc.) still pass.
+	if _, isKey := msg.(tea.KeyMsg); !isKey || m.focus == focusDetails {
+		m.viewport, cmd = m.viewport.Update(msg)
+		cmds = append(cmds, cmd)
+	}
 
 	return m, tea.Batch(cmds...)
 }

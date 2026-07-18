@@ -1171,3 +1171,40 @@ func TestFilterAndSearchEmptyStateUnresolvedLogin(t *testing.T) {
 		t.Fatalf("expected unresolved-login hint in combined filter+query empty state, got:\n%s", v)
 	}
 }
+
+func TestListPaneKeysDoNotScrollDetailViewport(t *testing.T) {
+	t.Parallel()
+	tall := strings.Repeat("line\n", 300)
+	// Keys the bubbles viewport binds to downward scrolling (d=half-page, j=line,
+	// f=page). In the LIST pane these must NOT scroll the detail viewport. PR #1 is
+	// authored by dependabot[bot] (and stays first/selected under the cursor) so
+	// that pressing 'd' — which also toggles the Dependabot quick filter — still
+	// leaves it visible with its tall body; otherwise the filter would empty the
+	// viewport and mask the very scroll bug this test targets.
+	for _, r := range []rune{'d', 'j', 'f'} {
+		m := withWideFilteredPRs("octocat",
+			ghClient.PullRequest{Number: 1, Title: "a", Body: tall, User: ghClient.User{Login: "dependabot[bot]"}},
+			ghClient.PullRequest{Number: 2, Title: "b", Body: tall, User: ghClient.User{Login: "octocat"}},
+		)
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		if got := updated.(Model); !got.viewport.AtTop() {
+			t.Errorf("key %q in list focus scrolled the detail viewport (YOffset=%d); want top", r, got.viewport.YOffset)
+		}
+	}
+}
+
+func TestDetailPaneStillScrollsWhenFocused(t *testing.T) {
+	t.Parallel()
+	tall := strings.Repeat("line\n", 300)
+	// Authored by dependabot[bot] so toggling the Dependabot filter (also bound to
+	// 'd') keeps this PR visible instead of emptying the viewport, letting the
+	// scroll this test checks for actually be observable.
+	m := withWideFilteredPRs("octocat",
+		ghClient.PullRequest{Number: 1, Title: "a", Body: tall, User: ghClient.User{Login: "dependabot[bot]"}},
+	)
+	m.focus = focusDetails
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}}) // half-page-down when details focused
+	if got := updated.(Model); got.viewport.AtTop() {
+		t.Fatal("detail pane focused: 'd' should scroll the detail viewport")
+	}
+}
