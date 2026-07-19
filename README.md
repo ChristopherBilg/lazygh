@@ -14,6 +14,7 @@
 
 - ✅ **Repository picker** — jump into any of your most recently pushed repositories
 - ✅ **Pull-request browsing** — a split-pane list + detail view of a repo's open PRs
+- ✅ **Tabbed PR detail** — switch the right pane between Description and Comments with `[`/`]` (Files Changed is a placeholder for the upcoming diff viewer)
 - ✅ **PR actions** — check a PR out locally (`c`) or open it in your browser (`o`)
 - ✅ **Fuzzy PR search** (`/`) — filter the pull-request list by title as you type
 - ✅ **Quick PR filters** — one keystroke to focus on **My PRs** (`m`), **Needs my Review** (`v`), or **Dependabot** (`d`); press the active key again to clear
@@ -99,6 +100,7 @@ These are the defaults; every action can be remapped via configuration (see belo
 | `v` | Filter to PRs awaiting your review (press again to clear) |
 | `d` | Filter to Dependabot PRs (press again to clear) |
 | `tab`, `shift+tab` | Toggle focus between the list and the detail pane |
+| `[`, `]` | Switch the detail pane's tab (Description / Files Changed / Comments) |
 | `c` | Check out the selected PR locally |
 | `o` | Open the selected PR in your browser |
 | `r` | Refresh the pull-request list |

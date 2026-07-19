@@ -63,6 +63,36 @@ func TestConfigureOverridesSearch(t *testing.T) {
 	}
 }
 
+func TestDefaultTabBindings(t *testing.T) {
+	if !key.Matches(runeMsg('['), Map.PrevTab) {
+		t.Error("default PrevTab should match '['")
+	}
+	if !key.Matches(runeMsg(']'), Map.NextTab) {
+		t.Error("default NextTab should match ']'")
+	}
+}
+
+func TestConfigureOverridesTabKeys(t *testing.T) {
+	t.Cleanup(func() { Configure(config.Default().Keys) })
+	kc := config.Default().Keys
+	kc.PrevTab = []string{"p"}
+	kc.NextTab = []string{"n"}
+	Configure(kc)
+
+	if !key.Matches(runeMsg('p'), Map.PrevTab) {
+		t.Error("after Configure, PrevTab should match 'p'")
+	}
+	if !key.Matches(runeMsg('n'), Map.NextTab) {
+		t.Error("after Configure, NextTab should match 'n'")
+	}
+	if key.Matches(runeMsg('['), Map.PrevTab) {
+		t.Error("after remap, '[' should no longer match PrevTab")
+	}
+	if key.Matches(runeMsg(']'), Map.NextTab) {
+		t.Error("after remap, ']' should no longer match NextTab")
+	}
+}
+
 func TestDefaultFilterBindings(t *testing.T) {
 	if !key.Matches(runeMsg('m'), Map.FilterMine) {
 		t.Error("default FilterMine should match 'm'")

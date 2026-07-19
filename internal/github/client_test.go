@@ -308,6 +308,13 @@ func TestReposEndpoint(t *testing.T) {
 	}
 }
 
+func TestPRCommentsEndpoint(t *testing.T) {
+	t.Parallel()
+	if got, want := prCommentsEndpoint("octocat", "hello", 42), "repos/octocat/hello/issues/42/comments?per_page=100"; got != want {
+		t.Errorf("prCommentsEndpoint = %q, want %q", got, want)
+	}
+}
+
 func TestPullRequestDecodesAuthorAndReviewers(t *testing.T) {
 	t.Parallel()
 	const data = `{"number":1,"title":"T","state":"open",` +

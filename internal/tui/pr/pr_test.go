@@ -14,6 +14,7 @@ import (
 	"github.com/ChristopherBilg/lazygh/internal/config"
 	ghClient "github.com/ChristopherBilg/lazygh/internal/github"
 	"github.com/ChristopherBilg/lazygh/internal/tui/keys"
+	"github.com/ChristopherBilg/lazygh/internal/tui/pr/tabs"
 	"github.com/ChristopherBilg/lazygh/internal/tui/screen"
 )
 
@@ -26,6 +27,8 @@ type fakeBackend struct {
 	prs            []ghClient.PullRequest
 	prsErr         error
 	openErr        error
+	comments       []ghClient.PRComment
+	commentsErr    error
 	currentUser    string
 	currentUserErr error
 }
@@ -38,8 +41,20 @@ func (f fakeBackend) CheckoutPR(_ context.Context, _, _ string, _ int) error { r
 
 func (f fakeBackend) OpenPRInBrowser(_ context.Context, _, _ string, _ int) error { return f.openErr }
 
+func (f fakeBackend) PRComments(_ context.Context, _, _ string, _ int, _ bool) ([]ghClient.PRComment, error) {
+	return f.comments, f.commentsErr
+}
+
 func (f fakeBackend) CurrentUser(context.Context) (string, error) {
 	return f.currentUser, f.currentUserErr
+}
+
+// comment builds a PRComment with the given author login and body.
+func comment(login, body string) ghClient.PRComment {
+	var c ghClient.PRComment
+	c.User.Login = login
+	c.Body = body
+	return c
 }
 
 // withPRs builds a loaded PR screen with n synthetic pull requests.
@@ -498,6 +513,75 @@ func TestFetchPRsCmdOtherErrorIsRecoverable(t *testing.T) {
 	}
 }
 
+func TestFetchCommentsCmdSuccess(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{comments: []ghClient.PRComment{comment("alice", "hi")}}, "octocat", "hello", 100, 40)
+	msg := m.fetchCommentsCmd(7)()
+	got, ok := msg.(prCommentsMsg)
+	if !ok {
+		t.Fatalf("expected prCommentsMsg, got %T", msg)
+	}
+	if got.prNumber != 7 || len(got.comments) != 1 || got.comments[0].User.Login != "alice" {
+		t.Fatalf("unexpected prCommentsMsg: %+v", got)
+	}
+}
+
+func TestFetchCommentsCmdClientInitFatal(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{commentsErr: ghClient.ErrClientInit}, "octocat", "hello", 100, 40)
+	if _, ok := m.fetchCommentsCmd(7)().(screen.ErrMsg); !ok {
+		t.Fatalf("expected screen.ErrMsg for ErrClientInit")
+	}
+}
+
+func TestFetchCommentsCmdOtherError(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{commentsErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	got, ok := m.fetchCommentsCmd(7)().(prCommentsErrMsg)
+	if !ok {
+		t.Fatalf("expected prCommentsErrMsg, got non-error message")
+	}
+	if got.prNumber != 7 {
+		t.Fatalf("prNumber = %d, want 7", got.prNumber)
+	}
+}
+
+func TestCommentMsgsTargetPRView(t *testing.T) {
+	t.Parallel()
+	if (prCommentsMsg{}).TargetView() != screen.ViewPR || (prCommentsErrMsg{}).TargetView() != screen.ViewPR {
+		t.Fatal("comment messages must target the PR view")
+	}
+}
+
+func TestPRCommentsMsgStoresLoadedState(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	updated, _ := m.Update(prCommentsMsg{prNumber: 1, comments: []ghClient.PRComment{comment("bob", "yo")}})
+	st := updated.(Model).comments[1]
+	if st.status != commentsLoaded || len(st.list) != 1 {
+		t.Fatalf("comments[1] = %+v, want loaded with 1 item", st)
+	}
+}
+
+func TestPRCommentsErrMsgStoresErrorState(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	updated, _ := m.Update(prCommentsErrMsg{prNumber: 1, err: errors.New("boom")})
+	if st := updated.(Model).comments[1]; st.status != commentsErrored || st.err == nil {
+		t.Fatalf("comments[1] = %+v, want errored with err", st)
+	}
+}
+
+func TestPRCommentsMsgStoresForNonSelectedPR(t *testing.T) {
+	t.Parallel()
+	m := withPRs(2) // cursor on PR #1; PR #2 is not selected
+	updated, _ := m.Update(prCommentsMsg{prNumber: 2, comments: []ghClient.PRComment{comment("carol", "later")}})
+	st := updated.(Model).comments[2]
+	if st.status != commentsLoaded || len(st.list) != 1 {
+		t.Fatalf("comments[2] = %+v, want loaded with 1 item for the non-selected PR", st)
+	}
+}
+
 func TestCheckoutRemapTakesEffect(t *testing.T) {
 	// No t.Parallel: keys.Configure mutates the process-wide key map.
 	t.Cleanup(func() { keys.Configure(config.Default().Keys) })
@@ -782,6 +866,40 @@ func TestViewCommittedZeroMatchesShowsBadgeAndNoResults(t *testing.T) {
 	}
 	if !strings.Contains(v, "No PRs match") {
 		t.Fatalf("expected no-results message with badge, got:\n%s", v)
+	}
+}
+
+func TestTabKeysCycleActiveTab(t *testing.T) {
+	t.Parallel()
+	next := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}}
+	prev := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}}
+	m := withPRs(1)
+	if m.activeTab != tabs.Description {
+		t.Fatalf("initial activeTab = %d, want Description", m.activeTab)
+	}
+	step := func(mm Model, k tea.KeyMsg) Model { u, _ := mm.Update(k); return u.(Model) }
+	m = step(m, next)
+	if m.activeTab != tabs.FilesChanged {
+		t.Fatalf("after ], activeTab = %d, want FilesChanged", m.activeTab)
+	}
+	m = step(m, next)
+	m = step(m, next) // wrap
+	if m.activeTab != tabs.Description {
+		t.Fatalf("after ]]], activeTab = %d, want Description (wrapped)", m.activeTab)
+	}
+	m = step(m, prev) // wrap back
+	if m.activeTab != tabs.Comments {
+		t.Fatalf("after [, activeTab = %d, want Comments (wrapped)", m.activeTab)
+	}
+}
+
+func TestViewRendersTabLabels(t *testing.T) {
+	t.Parallel()
+	v := withPRs(1).View()
+	for _, label := range []string{"Description", "Files Changed", "Comments"} {
+		if !strings.Contains(v, label) {
+			t.Fatalf("view missing tab label %q:\n%s", label, v)
+		}
 	}
 }
 
@@ -1190,6 +1308,191 @@ func TestListPaneKeysDoNotScrollDetailViewport(t *testing.T) {
 		if got := updated.(Model); !got.viewport.AtTop() {
 			t.Errorf("key %q in list focus scrolled the detail viewport (YOffset=%d); want top", r, got.viewport.YOffset)
 		}
+	}
+}
+
+func TestDescriptionTabShowsBody(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.ctx.PRs[0].Body = "the body text"
+	m.updateViewportContent()
+	if v := m.View(); !strings.Contains(v, "the body text") {
+		t.Fatalf("Description tab missing body:\n%s", v)
+	}
+}
+
+func TestFilesChangedTabShowsPlaceholder(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.activeTab = tabs.FilesChanged
+	m.updateViewportContent()
+	if v := m.View(); !strings.Contains(v, "separate work item") {
+		t.Fatalf("Files Changed tab missing placeholder:\n%s", v)
+	}
+}
+
+func TestCommentsTabLoadingState(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.activeTab = tabs.Comments
+	m.updateViewportContent()
+	if v := m.View(); !strings.Contains(v, "Loading comments") {
+		t.Fatalf("Comments tab missing loading state:\n%s", v)
+	}
+}
+
+func TestCommentsTabRendersThreadInOrder(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.activeTab = tabs.Comments
+	m.comments[1] = commentState{status: commentsLoaded, list: []ghClient.PRComment{
+		comment("alice", "first body"), comment("bob", "second body"),
+	}}
+	m.updateViewportContent()
+	v := m.View()
+	i, j := strings.Index(v, "first body"), strings.Index(v, "second body")
+	if i < 0 || j < 0 || i > j {
+		t.Fatalf("comments not rendered in order (i=%d j=%d):\n%s", i, j, v)
+	}
+	if !strings.Contains(v, "alice") || !strings.Contains(v, "bob") {
+		t.Fatalf("comments missing authors:\n%s", v)
+	}
+}
+
+func TestCommentsTabEmptyState(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.activeTab = tabs.Comments
+	m.comments[1] = commentState{status: commentsLoaded}
+	m.updateViewportContent()
+	if v := m.View(); !strings.Contains(v, "No comments yet") {
+		t.Fatalf("Comments tab missing empty state:\n%s", v)
+	}
+}
+
+func TestCommentsTabErrorState(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.activeTab = tabs.Comments
+	m.comments[1] = commentState{status: commentsErrored, err: errors.New("network down")}
+	m.updateViewportContent()
+	if v := m.View(); !strings.Contains(v, "Failed to load comments") || !strings.Contains(v, "network down") {
+		t.Fatalf("Comments tab missing error state:\n%s", v)
+	}
+}
+
+func TestFooterDocumentsTabKeys(t *testing.T) {
+	t.Parallel()
+	if v := withPRs(1).View(); !strings.Contains(v, "Tabs") {
+		t.Fatalf("footer missing tab hint:\n%s", v)
+	}
+}
+
+func TestMaybeFetchCommentsSkipsNonCommentsTab(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1) // Description tab (default)
+	if cmd := m.maybeFetchComments(); cmd != nil {
+		t.Fatal("expected nil command off the Comments tab")
+	}
+	if len(m.comments) != 0 {
+		t.Fatal("expected no comment state created off the Comments tab")
+	}
+}
+
+func TestMaybeFetchCommentsSkipsLoaded(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.activeTab = tabs.Comments
+	m.comments[1] = commentState{status: commentsLoaded}
+	if cmd := m.maybeFetchComments(); cmd != nil {
+		t.Fatal("expected nil command when comments already loaded")
+	}
+}
+
+func TestMaybeFetchCommentsTriggersWhenNotLoaded(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.activeTab = tabs.Comments
+	cmd := m.maybeFetchComments()
+	if cmd == nil {
+		t.Fatal("expected a fetch command when comments not loaded")
+	}
+	if m.comments[1].status != commentsLoading {
+		t.Fatalf("comments[1].status = %d, want loading", m.comments[1].status)
+	}
+}
+
+func TestMaybeFetchCommentsRetriesAfterError(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.activeTab = tabs.Comments
+	m.comments[1] = commentState{status: commentsErrored, err: errors.New("boom")}
+	if cmd := m.maybeFetchComments(); cmd == nil {
+		t.Fatal("expected a retry command for an errored PR")
+	}
+	if m.comments[1].status != commentsLoading {
+		t.Fatalf("comments[1].status = %d, want loading after retry", m.comments[1].status)
+	}
+}
+
+func TestEnteringCommentsTabTriggersFetch(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	next := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}}
+	u, _ := m.Update(next) // -> FilesChanged (no fetch)
+	m = u.(Model)
+	if _, exists := m.comments[1]; exists {
+		t.Fatal("Files Changed tab must not fetch comments")
+	}
+	u, _ = m.Update(next) // -> Comments (fetch)
+	m = u.(Model)
+	if m.comments[1].status != commentsLoading {
+		t.Fatalf("entering Comments did not set loading; got %d", m.comments[1].status)
+	}
+}
+
+func TestSelectionChangeFetchesNewPRComments(t *testing.T) {
+	t.Parallel()
+	m := withPRs(2)
+	m.activeTab = tabs.Comments
+	m.comments[1] = commentState{status: commentsLoaded}
+	u, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown}) // cursor -> PR #2
+	m = u.(Model)
+	if m.comments[2].status != commentsLoading {
+		t.Fatalf("moving to PR #2 on Comments tab did not fetch; got %d", m.comments[2].status)
+	}
+	if m.activeTab != tabs.Comments {
+		t.Fatal("activeTab must persist across PR changes")
+	}
+}
+
+func TestTypingSelectionChangeFetchesComments(t *testing.T) {
+	t.Parallel()
+	m := withTitledPRs("Add docs", "Fix cache") // #1 docs, #2 cache
+	m.activeTab = tabs.Comments
+	m.comments[1] = commentState{status: commentsLoaded} // #1 already loaded
+	m = typeRunes(enterSearch(t, m), "cache")            // best match -> #2 (unloaded)
+	if pr, ok := m.selectedPR(); !ok || pr.Number != 2 {
+		t.Fatalf("expected PR #2 selected after typing, got %+v ok=%v", pr, ok)
+	}
+	if m.comments[2].status != commentsLoading {
+		t.Fatalf("typing to a new PR on the Comments tab did not fetch; got %d", m.comments[2].status)
+	}
+}
+
+func TestCancelSearchFetchesComments(t *testing.T) {
+	t.Parallel()
+	m := withTitledPRs("Alpha", "Beta") // #1, #2
+	m.activeTab = tabs.Comments
+	m.cursor = 1                                         // viewing #2
+	m.comments[2] = commentState{status: commentsLoaded} // #2 loaded
+	esc, _ := enterSearch(t, m).Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = esc.(Model)
+	if pr, ok := m.selectedPR(); !ok || pr.Number != 1 {
+		t.Fatalf("expected PR #1 selected after Esc reset, got %+v ok=%v", pr, ok)
+	}
+	if m.comments[1].status != commentsLoading {
+		t.Fatalf("cancel-search to a new PR on the Comments tab did not fetch; got %d", m.comments[1].status)
 	}
 }
 

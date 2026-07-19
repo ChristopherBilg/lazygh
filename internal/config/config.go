@@ -52,6 +52,8 @@ type KeysConfig struct {
 	FilterMine       []string
 	FilterReview     []string
 	FilterDependabot []string
+	PrevTab          []string
+	NextTab          []string
 }
 
 // ThemeConfig holds the resolved, validated color per semantic role.
@@ -89,6 +91,8 @@ func Default() Config {
 			FilterMine:       []string{"m"},
 			FilterReview:     []string{"v"},
 			FilterDependabot: []string{"d"},
+			PrevTab:          []string{"["},
+			NextTab:          []string{"]"},
 		},
 		Theme: ThemeConfig{
 			Accent:   "62",
@@ -144,6 +148,8 @@ type rawKeys struct {
 	FilterMine       *keyList `yaml:"filter_mine"`
 	FilterReview     *keyList `yaml:"filter_review"`
 	FilterDependabot *keyList `yaml:"filter_dependabot"`
+	PrevTab          *keyList `yaml:"prev_tab"`
+	NextTab          *keyList `yaml:"next_tab"`
 }
 
 type rawTheme struct {
@@ -248,6 +254,8 @@ keys:
   # filter_mine: [m]              # show only PRs you authored
   # filter_review: [v]            # show only PRs awaiting your review
   # filter_dependabot: [d]        # show only Dependabot PRs
+  # prev_tab: ["["]
+  # next_tab: ["]"]
 theme:
   # accent: "62"             # active borders, title bar, boxes
   # border: "240"            # inactive pane borders
@@ -339,6 +347,8 @@ func applyKeys(cfg *Config, rk *rawKeys) {
 		{"filter_mine", rk.FilterMine, &cfg.Keys.FilterMine},
 		{"filter_review", rk.FilterReview, &cfg.Keys.FilterReview},
 		{"filter_dependabot", rk.FilterDependabot, &cfg.Keys.FilterDependabot},
+		{"prev_tab", rk.PrevTab, &cfg.Keys.PrevTab},
+		{"next_tab", rk.NextTab, &cfg.Keys.NextTab},
 	} {
 		if b.raw == nil {
 			continue
