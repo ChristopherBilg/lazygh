@@ -389,3 +389,80 @@ func TestCurrentUserDoesNotCacheError(t *testing.T) {
 		t.Errorf("fetchLogin called %d times, want 2 (error not cached)", calls)
 	}
 }
+
+func TestNewClientMergeMethod(t *testing.T) {
+	t.Parallel()
+	if got := NewClient(ClientConfig{}).mergeMethod; got != "merge" {
+		t.Errorf("default mergeMethod = %q, want merge", got)
+	}
+	if got := NewClient(ClientConfig{MergeMethod: "squash"}).mergeMethod; got != "squash" {
+		t.Errorf("mergeMethod = %q, want squash", got)
+	}
+	if got := NewClient(ClientConfig{MergeMethod: "bogus"}).mergeMethod; got != "merge" {
+		t.Errorf("invalid mergeMethod = %q, want merge (defaulted)", got)
+	}
+}
+
+func TestApprovePRArgs(t *testing.T) {
+	t.Parallel()
+	var gotArgs []string
+	c := &Client{subprocessTimeout: 30 * time.Second,
+		exec: func(_ context.Context, args ...string) (stdout, stderr bytes.Buffer, err error) {
+			gotArgs = args
+			return bytes.Buffer{}, bytes.Buffer{}, nil
+		}}
+	if err := c.ApprovePR(t.Context(), "octocat", "hello", 7); err != nil {
+		t.Fatalf("ApprovePR: %v", err)
+	}
+	if want := []string{"pr", "review", "7", "--repo", "octocat/hello", "--approve"}; !slices.Equal(gotArgs, want) {
+		t.Fatalf("args = %v, want %v", gotArgs, want)
+	}
+}
+
+func TestMergePRUsesConfiguredMethod(t *testing.T) {
+	t.Parallel()
+	var gotArgs []string
+	c := &Client{subprocessTimeout: 30 * time.Second, mergeMethod: "squash",
+		exec: func(_ context.Context, args ...string) (stdout, stderr bytes.Buffer, err error) {
+			gotArgs = args
+			return bytes.Buffer{}, bytes.Buffer{}, nil
+		}}
+	if err := c.MergePR(t.Context(), "octocat", "hello", 8); err != nil {
+		t.Fatalf("MergePR: %v", err)
+	}
+	if want := []string{"pr", "merge", "8", "--repo", "octocat/hello", "--squash"}; !slices.Equal(gotArgs, want) {
+		t.Fatalf("args = %v, want %v", gotArgs, want)
+	}
+}
+
+func TestClosePRArgs(t *testing.T) {
+	t.Parallel()
+	var gotArgs []string
+	c := &Client{subprocessTimeout: 30 * time.Second,
+		exec: func(_ context.Context, args ...string) (stdout, stderr bytes.Buffer, err error) {
+			gotArgs = args
+			return bytes.Buffer{}, bytes.Buffer{}, nil
+		}}
+	if err := c.ClosePR(t.Context(), "octocat", "hello", 9); err != nil {
+		t.Fatalf("ClosePR: %v", err)
+	}
+	if want := []string{"pr", "close", "9", "--repo", "octocat/hello"}; !slices.Equal(gotArgs, want) {
+		t.Fatalf("args = %v, want %v", gotArgs, want)
+	}
+}
+
+func TestMergePRFoldsStderrIntoError(t *testing.T) {
+	t.Parallel()
+	c := &Client{subprocessTimeout: 30 * time.Second, mergeMethod: "merge",
+		exec: func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
+			stderr.WriteString("Pull request is not mergeable\n")
+			return bytes.Buffer{}, stderr, errors.New("exit status 1")
+		}}
+	err := c.MergePR(t.Context(), "octocat", "hello", 8)
+	if err == nil {
+		t.Fatal("expected MergePR to return an error")
+	}
+	if !strings.Contains(err.Error(), "Pull request is not mergeable") {
+		t.Fatalf("error %q should include gh's stderr reason", err)
+	}
+}
