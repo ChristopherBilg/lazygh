@@ -1208,3 +1208,20 @@ func TestDetailPaneStillScrollsWhenFocused(t *testing.T) {
 		t.Fatal("detail pane focused: 'd' should scroll the detail viewport")
 	}
 }
+
+func TestFilterKeysIgnoredWhenDetailFocused(t *testing.T) {
+	t.Parallel()
+	m := withWideFilteredPRs("octocat",
+		ghClient.PullRequest{Number: 1, Title: "a", User: ghClient.User{Login: "dependabot[bot]"}},
+		ghClient.PullRequest{Number: 2, Title: "b", User: ghClient.User{Login: "octocat"}},
+	)
+	m.focus = focusDetails
+	// Filters are a list-pane action; in the detail pane these keys drive viewport
+	// scrolling (e.g. "d" = half-page-down) and must not change the active filter.
+	for _, r := range []rune{'m', 'v', 'd'} {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		if got := updated.(Model).filter; got != filterAll {
+			t.Fatalf("key %q in detail focus changed filter to %v; want filterAll (filters are list-pane only)", r, got)
+		}
+	}
+}

@@ -179,7 +179,10 @@ func (m *Model) recompute() {
 // active. It resets the cursor to the top and recomputes. It is a no-op while the
 // list is unavailable (loading, or a fatal error with no PRs to show).
 func (m *Model) setFilter(f prFilter) {
-	if m.loading || (m.fetchErr != nil && len(m.ctx.PRs) == 0) {
+	// Filters are a list-pane action (like search): ignore them when the detail
+	// pane is focused, where the same keys drive viewport scrolling (e.g. "d" =
+	// half-page-down). Also a no-op while the list is unavailable.
+	if m.focus != focusList || m.loading || (m.fetchErr != nil && len(m.ctx.PRs) == 0) {
 		return
 	}
 	if m.filter == f {
