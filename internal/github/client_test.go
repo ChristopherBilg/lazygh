@@ -466,3 +466,100 @@ func TestMergePRFoldsStderrIntoError(t *testing.T) {
 		t.Fatalf("error %q should include gh's stderr reason", err)
 	}
 }
+
+func TestApprovePRLogsSuccessAndFailure(t *testing.T) {
+	// No t.Parallel: slog.SetDefault mutates the process-wide default logger.
+	origLogger := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(origLogger) })
+	var buf bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	c := &Client{subprocessTimeout: 30 * time.Second,
+		exec: func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
+			return bytes.Buffer{}, bytes.Buffer{}, nil
+		}}
+	if err := c.ApprovePR(t.Context(), "octocat", "hello", 7); err != nil {
+		t.Fatalf("ApprovePR success returned error: %v", err)
+	}
+	if out := buf.String(); !strings.Contains(out, "level=INFO") || !strings.Contains(out, "approved pr") || !strings.Contains(out, "pr=7") {
+		t.Fatalf("success log missing; got: %s", out)
+	}
+
+	buf.Reset()
+	c.exec = func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
+		return bytes.Buffer{}, bytes.Buffer{}, errors.New("boom")
+	}
+	if err := c.ApprovePR(t.Context(), "octocat", "hello", 7); err == nil {
+		t.Fatal("expected ApprovePR to return the exec error")
+	}
+	if out := buf.String(); !strings.Contains(out, "level=WARN") || !strings.Contains(out, "approve pr failed") || !strings.Contains(out, "boom") {
+		t.Fatalf("failure log missing; got: %s", out)
+	}
+}
+
+func TestClosePRLogsSuccessAndFailure(t *testing.T) {
+	// No t.Parallel: slog.SetDefault mutates the process-wide default logger.
+	origLogger := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(origLogger) })
+	var buf bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	c := &Client{subprocessTimeout: 30 * time.Second,
+		exec: func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
+			return bytes.Buffer{}, bytes.Buffer{}, nil
+		}}
+	if err := c.ClosePR(t.Context(), "octocat", "hello", 9); err != nil {
+		t.Fatalf("ClosePR success returned error: %v", err)
+	}
+	if out := buf.String(); !strings.Contains(out, "level=INFO") || !strings.Contains(out, "closed pr") || !strings.Contains(out, "pr=9") {
+		t.Fatalf("success log missing; got: %s", out)
+	}
+
+	buf.Reset()
+	c.exec = func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
+		return bytes.Buffer{}, bytes.Buffer{}, errors.New("boom")
+	}
+	if err := c.ClosePR(t.Context(), "octocat", "hello", 9); err == nil {
+		t.Fatal("expected ClosePR to return the exec error")
+	}
+	if out := buf.String(); !strings.Contains(out, "level=WARN") || !strings.Contains(out, "close pr failed") || !strings.Contains(out, "boom") {
+		t.Fatalf("failure log missing; got: %s", out)
+	}
+}
+
+func TestApprovePRAppliesDeadline(t *testing.T) {
+	t.Parallel()
+	var deadline time.Time
+	var hasDeadline bool
+	c := &Client{subprocessTimeout: 30 * time.Second,
+		exec: func(ctx context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
+			deadline, hasDeadline = ctx.Deadline()
+			return bytes.Buffer{}, bytes.Buffer{}, nil
+		}}
+	if err := c.ApprovePR(t.Context(), "octocat", "hello", 7); err != nil {
+		t.Fatalf("ApprovePR returned error: %v", err)
+	}
+	if !hasDeadline {
+		t.Fatal("expected ApprovePR to pass a context with a deadline")
+	}
+	wantWindow := 30 * time.Second
+	if d := time.Until(deadline); d < wantWindow-2*time.Second || d > wantWindow+time.Second {
+		t.Fatalf("deadline in %v, want ~%v", d, wantWindow)
+	}
+}
+
+func TestPRSubcommandEmptyStderrReturnsRawError(t *testing.T) {
+	t.Parallel()
+	sentinel := errors.New("network unreachable")
+	c := &Client{subprocessTimeout: 30 * time.Second,
+		exec: func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
+			return bytes.Buffer{}, bytes.Buffer{}, sentinel
+		}}
+	err := c.ClosePR(t.Context(), "octocat", "hello", 9)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("err = %v, want it to return the sentinel when stderr is empty", err)
+	}
+	if err.Error() != "network unreachable" {
+		t.Fatalf("err = %q, want the raw error with no stderr suffix when stderr is empty", err.Error())
+	}
+}
