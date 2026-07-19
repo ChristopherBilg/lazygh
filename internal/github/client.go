@@ -37,6 +37,7 @@ type Client struct {
 	// Seams, defaulted to the real implementations; tests override them.
 	exec        func(ctx context.Context, args ...string) (stdout, stderr bytes.Buffer, err error)
 	currentRepo func() (repository.Repository, error)
+	fetchLogin  func(ctx context.Context) (string, error)
 }
 
 // Built-in defaults, applied by NewClient for any non-positive ClientConfig field.
@@ -65,6 +66,7 @@ func NewClient(cfg ClientConfig) *Client {
 	if c.pageSize <= 0 {
 		c.pageSize = defaultRepoPageSize
 	}
+	c.fetchLogin = c.fetchLoginREST
 	return c
 }
 
@@ -89,12 +91,19 @@ type Repository struct {
 	Description string `json:"description"`
 }
 
+// User is the subset of a GitHub user object lazygh needs: the login handle.
+type User struct {
+	Login string `json:"login"`
+}
+
 // PullRequest is a single pull request as returned by the REST API.
 type PullRequest struct {
-	Title  string `json:"title"`
-	Number int    `json:"number"`
-	State  string `json:"state"`
-	Body   string `json:"body"`
+	Title              string `json:"title"`
+	Number             int    `json:"number"`
+	State              string `json:"state"`
+	Body               string `json:"body"`
+	User               User   `json:"user"`                // author
+	RequestedReviewers []User `json:"requested_reviewers"` // pending review requests
 }
 
 // RepoContext pairs a repository's owner/name with its fetched pull requests.
@@ -165,6 +174,28 @@ func (c *Client) FetchRepoPRs(ctx context.Context, owner, name string) (RepoCont
 		return RepoContext{}, err
 	}
 	return RepoContext{Owner: owner, Name: name, PRs: prs}, nil
+}
+
+// fetchLoginREST resolves the authenticated user's login via REST GET user.
+func (c *Client) fetchLoginREST(ctx context.Context) (string, error) {
+	client, err := c.newRESTClient()
+	if err != nil {
+		return "", err
+	}
+	var u User
+	if err := client.DoWithContext(ctx, http.MethodGet, "user", nil, &u); err != nil {
+		return "", err
+	}
+	return u.Login, nil
+}
+
+// CurrentUser returns the authenticated user's login, memoized for the process
+// lifetime (the login does not change within a session). getOrLoad caches only
+// on success, so a failed lookup is retried on the next call.
+func (c *Client) CurrentUser(ctx context.Context) (string, error) {
+	return getOrLoad(c.cache, "user", false, func() (string, error) {
+		return c.fetchLogin(ctx)
+	})
 }
 
 // CheckoutPR checks out the given PR of owner/name into the current git working

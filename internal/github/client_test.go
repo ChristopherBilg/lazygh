@@ -3,6 +3,7 @@ package github
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"path/filepath"
@@ -304,5 +305,80 @@ func TestReposEndpoint(t *testing.T) {
 	}
 	if got, want := reposEndpoint(10), "user/repos?sort=pushed&per_page=10"; got != want {
 		t.Errorf("reposEndpoint(10) = %q, want %q", got, want)
+	}
+}
+
+func TestPullRequestDecodesAuthorAndReviewers(t *testing.T) {
+	t.Parallel()
+	const data = `{"number":1,"title":"T","state":"open",` +
+		`"user":{"login":"octocat"},` +
+		`"requested_reviewers":[{"login":"hubot"},{"login":"octo-dev"}]}`
+	var pr PullRequest
+	if err := json.Unmarshal([]byte(data), &pr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if pr.User.Login != "octocat" {
+		t.Errorf("author = %q, want octocat", pr.User.Login)
+	}
+	if len(pr.RequestedReviewers) != 2 ||
+		pr.RequestedReviewers[0].Login != "hubot" ||
+		pr.RequestedReviewers[1].Login != "octo-dev" {
+		t.Errorf("reviewers = %+v, want [hubot octo-dev]", pr.RequestedReviewers)
+	}
+}
+
+func TestCurrentUserReturnsLogin(t *testing.T) {
+	t.Parallel()
+	c := &Client{cache: NewCache(), fetchLogin: func(context.Context) (string, error) {
+		return "octocat", nil
+	}}
+	got, err := c.CurrentUser(t.Context())
+	if err != nil {
+		t.Fatalf("CurrentUser: %v", err)
+	}
+	if got != "octocat" {
+		t.Errorf("login = %q, want octocat", got)
+	}
+}
+
+func TestCurrentUserMemoizes(t *testing.T) {
+	t.Parallel()
+	calls := 0
+	c := &Client{cache: NewCache(), fetchLogin: func(context.Context) (string, error) {
+		calls++
+		return "octocat", nil
+	}}
+	for range 3 {
+		if _, err := c.CurrentUser(t.Context()); err != nil {
+			t.Fatalf("CurrentUser: %v", err)
+		}
+	}
+	if calls != 1 {
+		t.Errorf("fetchLogin called %d times, want 1 (memoized)", calls)
+	}
+}
+
+func TestCurrentUserDoesNotCacheError(t *testing.T) {
+	t.Parallel()
+	calls := 0
+	c := &Client{cache: NewCache(), fetchLogin: func(context.Context) (string, error) {
+		calls++
+		if calls == 1 {
+			return "", errors.New("boom")
+		}
+		return "octocat", nil
+	}}
+	if _, err := c.CurrentUser(t.Context()); err == nil {
+		t.Fatal("expected first CurrentUser to error")
+	}
+	got, err := c.CurrentUser(t.Context())
+	if err != nil {
+		t.Fatalf("second CurrentUser: %v", err)
+	}
+	if got != "octocat" {
+		t.Errorf("login = %q, want octocat after retry", got)
+	}
+	if calls != 2 {
+		t.Errorf("fetchLogin called %d times, want 2 (error not cached)", calls)
 	}
 }
