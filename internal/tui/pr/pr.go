@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -50,35 +51,66 @@ type commentState struct {
 	err    error
 }
 
+// prFilter is the active quick filter applied to the PR list.
+type prFilter int
+
+// Quick-filter values. filterAll shows every PR.
+const (
+	filterAll prFilter = iota
+	filterMine
+	filterNeedsReview
+	filterDependabot
+)
+
+// dependabotLogin is the author login GitHub assigns to Dependabot PRs.
+const dependabotLogin = "dependabot[bot]"
+
+// label returns the human-readable filter name shown in the badge/footer.
+func (f prFilter) label() string {
+	switch f {
+	case filterMine:
+		return "My PRs"
+	case filterNeedsReview:
+		return "Needs my Review"
+	case filterDependabot:
+		return "Dependabot"
+	default:
+		return "All"
+	}
+}
+
 // Backend is the subset of the github client the PR screen needs.
 type Backend interface {
 	RepoPRs(ctx context.Context, owner, name string, force bool) (ghClient.RepoContext, error)
 	CheckoutPR(ctx context.Context, owner, name string, prNumber int) error
 	OpenPRInBrowser(ctx context.Context, owner, name string, prNumber int) error
 	PRComments(ctx context.Context, owner, name string, prNumber int, force bool) ([]ghClient.PRComment, error)
+	CurrentUser(ctx context.Context) (string, error)
 }
 
 // Model is the pull-request split-pane screen.
 type Model struct {
-	backend    Backend
-	ctx        ghClient.RepoContext
-	cursor     int
-	focus      focus
-	loading    bool
-	refreshing bool
-	fetchErr   error
-	message    string
-	spinner    spinner.Model
-	viewport   viewport.Model
-	input      textinput.Model // the "/" filter field
-	searching  bool            // input focused / capturing keystrokes
-	query      string          // applied filter; "" = no filter
-	filtered   []int           // indices into ctx.PRs, in display (ranked) order
-	width      int
-	height     int
-	ready      bool
-	comments   map[int]commentState // per-PR comment load state, keyed by PR number
-	activeTab  tabs.Tab             // selected right-pane tab; persists across PR changes
+	backend     Backend
+	ctx         ghClient.RepoContext
+	cursor      int
+	focus       focus
+	loading     bool
+	refreshing  bool
+	fetchErr    error
+	message     string
+	spinner     spinner.Model
+	viewport    viewport.Model
+	input       textinput.Model // the "/" filter field
+	searching   bool            // input focused / capturing keystrokes
+	query       string          // applied filter; "" = no filter
+	filter      prFilter        // active quick filter; filterAll = no filter
+	currentUser string          // authenticated user's login; "" until resolved
+	filtered    []int           // indices into ctx.PRs, in display (ranked) order
+	width       int
+	height      int
+	ready       bool
+	comments    map[int]commentState // per-PR comment load state, keyed by PR number
+	activeTab   tabs.Tab             // selected right-pane tab; persists across PR changes
 }
 
 // New returns a PR screen for the given repository, sized to the current window,
@@ -105,28 +137,83 @@ func New(backend Backend, owner, name string, width, height int) Model {
 	return m
 }
 
-// recompute rebuilds the filtered (visible) index list from the current query and
-// PR set, clamps the cursor into range, and refreshes the detail viewport. It is
-// the single place the visible set is derived, so filtering, refresh, and cancel
-// all stay consistent.
+// filterMatch reports whether pr belongs to the active quick filter. The
+// user-dependent filters never match while the current user is unresolved.
+func (m Model) filterMatch(pr ghClient.PullRequest) bool {
+	switch m.filter {
+	case filterMine:
+		return m.currentUser != "" && strings.EqualFold(pr.User.Login, m.currentUser)
+	case filterNeedsReview:
+		if m.currentUser == "" {
+			return false
+		}
+		for _, r := range pr.RequestedReviewers {
+			if strings.EqualFold(r.Login, m.currentUser) {
+				return true
+			}
+		}
+		return false
+	case filterDependabot:
+		return strings.EqualFold(pr.User.Login, dependabotLogin)
+	default: // filterAll
+		return true
+	}
+}
+
+// filterIndices returns the indices of ctx.PRs matching the active quick filter,
+// in natural (unranked) order.
+func (m Model) filterIndices() []int {
+	out := make([]int, 0, len(m.ctx.PRs))
+	for i := range m.ctx.PRs {
+		if m.filterMatch(m.ctx.PRs[i]) {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// recompute rebuilds the filtered (visible) index list from the current query,
+// active quick filter, and PR set, clamps the cursor into range, and refreshes
+// the detail viewport. It is the single place the visible set is derived, so
+// filtering, refresh, and cancel all stay consistent.
 func (m *Model) recompute() {
+	base := m.filterIndices()
 	if m.query == "" {
-		m.filtered = make([]int, len(m.ctx.PRs))
-		for i := range m.filtered {
-			m.filtered[i] = i
-		}
+		m.filtered = base
 	} else {
-		titles := make([]string, len(m.ctx.PRs))
-		for i, pr := range m.ctx.PRs {
-			titles[i] = pr.Title
+		titles := make([]string, len(base))
+		for i, idx := range base {
+			titles[i] = m.ctx.PRs[idx].Title
 		}
-		m.filtered = fuzzy.Rank(m.query, titles)
+		ranked := fuzzy.Rank(m.query, titles) // indices into base
+		m.filtered = make([]int, len(ranked))
+		for i, r := range ranked {
+			m.filtered[i] = base[r]
+		}
 	}
 	if m.cursor >= len(m.filtered) {
 		m.cursor = max(len(m.filtered)-1, 0)
 	}
 	m.updateViewportContent()
 	m.viewport.GotoTop()
+}
+
+// setFilter applies quick filter f, toggling back to filterAll when f is already
+// active. It resets the cursor to the top and recomputes. It is a no-op while the
+// list is unavailable (loading, or a fatal error with no PRs to show).
+func (m *Model) setFilter(f prFilter) {
+	// Filters are a list-pane action (like search): ignore them when the detail
+	// pane is focused, where the same keys drive viewport scrolling (e.g. "d" =
+	// half-page-down). Also a no-op while the list is unavailable.
+	if m.focus != focusList || m.loading || (m.fetchErr != nil && len(m.ctx.PRs) == 0) {
+		return
+	}
+	if m.filter == f {
+		f = filterAll // pressing the active filter's key again clears it
+	}
+	m.filter = f
+	m.cursor = 0
+	m.recompute()
 }
 
 // selectedPR returns the PR under the cursor within the filtered set, or false
@@ -199,6 +286,13 @@ type prDataMsg ghClient.RepoContext
 
 // TargetView addresses fetched PR data to the pull-request screen.
 func (prDataMsg) TargetView() screen.ViewID { return screen.ViewPR }
+
+// currentUserMsg carries the resolved authenticated-user login to the PR screen.
+type currentUserMsg string
+
+// TargetView addresses the resolved login to the pull-request screen so it is
+// delivered even after a mid-fetch tab switch.
+func (currentUserMsg) TargetView() screen.ViewID { return screen.ViewPR }
 
 // statusMsg carries a transient footer status message.
 type statusMsg string
@@ -303,9 +397,25 @@ func (m Model) openBrowserCmd(owner, name string, prNumber int) tea.Cmd {
 	}
 }
 
-// Init starts fetching pull requests (from cache when available) and the spinner.
+// currentUserCmd resolves the authenticated user's login (memoized in the
+// client). A failure is logged and reported as an empty login, which simply
+// leaves the user-dependent filters matching nothing.
+func (m Model) currentUserCmd() tea.Cmd {
+	return func() tea.Msg {
+		// context.Background() for now; a program-scoped context is future work.
+		login, err := m.backend.CurrentUser(context.Background())
+		if err != nil {
+			slog.Warn("could not resolve current user; My PRs / Needs my Review filters will be empty", "err", err)
+			return currentUserMsg("")
+		}
+		return currentUserMsg(login)
+	}
+}
+
+// Init starts fetching pull requests (from cache when available), resolving
+// the current user, and the spinner.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.fetchPRsCmd(m.ctx.Owner, m.ctx.Name, false), m.spinner.Tick)
+	return tea.Batch(m.fetchPRsCmd(m.ctx.Owner, m.ctx.Name, false), m.currentUserCmd(), m.spinner.Tick)
 }
 
 // Update handles focus, navigation, PR actions, and data messages.
@@ -348,6 +458,12 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 				m.input.CursorEnd()
 				cmds = append(cmds, m.input.Focus())
 			}
+		case key.Matches(msg, keys.Map.FilterMine):
+			m.setFilter(filterMine)
+		case key.Matches(msg, keys.Map.FilterReview):
+			m.setFilter(filterNeedsReview)
+		case key.Matches(msg, keys.Map.FilterDependabot):
+			m.setFilter(filterDependabot)
 		case key.Matches(msg, keys.Map.TogglePane):
 			if m.focus == focusList {
 				m.focus = focusDetails
@@ -423,6 +539,13 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 			cmds = append(cmds, cmd)
 		}
 
+	case currentUserMsg:
+		m.currentUser = string(msg)
+		// Re-apply an active user-dependent filter now that the login is known.
+		if m.filter == filterMine || m.filter == filterNeedsReview {
+			m.recompute()
+		}
+
 	case screen.FetchErrMsg:
 		m.loading = false
 		m.refreshing = false
@@ -452,8 +575,15 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		}
 	}
 
-	m.viewport, cmd = m.viewport.Update(msg)
-	cmds = append(cmds, cmd)
+	// Forward to the detail viewport, but only let it consume key presses when the
+	// detail pane is focused. Otherwise the viewport's built-in bindings (j/k and
+	// d/u/f/b/space/pgup/pgdn) would scroll the detail pane while the user is
+	// navigating the list or toggling a filter — e.g. "d" (Dependabot filter) also
+	// triggers the viewport's half-page-down. Non-key messages (mouse, etc.) still pass.
+	if _, isKey := msg.(tea.KeyMsg); !isKey || m.focus == focusDetails {
+		m.viewport, cmd = m.viewport.Update(msg)
+		cmds = append(cmds, cmd)
+	}
 
 	return m, tea.Batch(cmds...)
 }
@@ -483,7 +613,7 @@ func (m *Model) resizeViewport() {
 func (m *Model) updateViewportContent() {
 	activePR, ok := m.selectedPR()
 	if !ok {
-		if m.query != "" {
+		if m.query != "" || m.filter != filterAll {
 			m.viewport.SetContent("") // the list pane shows the "no match" message
 		} else {
 			m.viewport.SetContent("No open PRs.")
@@ -581,6 +711,47 @@ func (m Model) View() string {
 	return header + ui + "\n\n" + m.footer()
 }
 
+// filterBadge returns the left-pane status badge for the active filter and/or
+// query, or "" when neither is active.
+func (m Model) filterBadge() string {
+	filterActive := m.filter != filterAll
+	queryActive := m.query != ""
+	switch {
+	case filterActive && queryActive:
+		return fmt.Sprintf("filter: %s · %q (%d/%d)", m.filter.label(), m.query, len(m.filtered), len(m.ctx.PRs))
+	case filterActive:
+		return fmt.Sprintf("filter: %s (%d/%d)", m.filter.label(), len(m.filtered), len(m.ctx.PRs))
+	case queryActive:
+		return fmt.Sprintf("filter: %q (%d/%d)", m.query, len(m.filtered), len(m.ctx.PRs))
+	default:
+		return ""
+	}
+}
+
+// emptyListMessage explains why the visible list is empty, given the active
+// filter and/or query.
+func (m Model) emptyListMessage() string {
+	filterActive := m.filter != filterAll
+	// A user-dependent filter with no resolved login can never match; say why.
+	unresolvedLogin := (m.filter == filterMine || m.filter == filterNeedsReview) && m.currentUser == ""
+	switch {
+	case filterActive && m.query != "":
+		if unresolvedLogin {
+			return fmt.Sprintf("No PRs match filter: %s and %q (couldn't determine your GitHub login).", m.filter.label(), m.query)
+		}
+		return fmt.Sprintf("No PRs match filter: %s and %q.", m.filter.label(), m.query)
+	case filterActive:
+		if unresolvedLogin {
+			return fmt.Sprintf("No PRs match filter: %s (couldn't determine your GitHub login).", m.filter.label())
+		}
+		return fmt.Sprintf("No PRs match filter: %s.", m.filter.label())
+	case m.query != "":
+		return fmt.Sprintf("No PRs match %q.", m.query)
+	default:
+		return "No open PRs."
+	}
+}
+
 // renderList renders the left-pane contents: an optional search input or filter
 // badge, then the filtered PR rows (or a no-results message).
 func (m Model) renderList(paneWidth int) string {
@@ -590,18 +761,15 @@ func (m Model) renderList(paneWidth int) string {
 	case m.searching:
 		b.WriteString(m.input.View())
 		b.WriteString("\n")
-	case m.query != "":
-		badge := fmt.Sprintf("filter: %q (%d/%d)", m.query, len(m.filtered), len(m.ctx.PRs))
-		b.WriteString(styles.Title.Render(styles.TruncateEllipsis(badge, paneWidth-2)))
-		b.WriteString("\n")
+	default:
+		if badge := m.filterBadge(); badge != "" {
+			b.WriteString(styles.Title.Render(styles.TruncateEllipsis(badge, paneWidth-2)))
+			b.WriteString("\n")
+		}
 	}
 
 	if len(m.filtered) == 0 {
-		if m.query != "" {
-			b.WriteString(styles.TruncateEllipsis(fmt.Sprintf("No PRs match %q.", m.query), paneWidth-2))
-		} else {
-			b.WriteString("No open PRs.")
-		}
+		b.WriteString(styles.TruncateEllipsis(m.emptyListMessage(), paneWidth-2))
 		return b.String()
 	}
 
@@ -626,7 +794,11 @@ func (m Model) footer() string {
 	if m.searching {
 		return fmt.Sprintf(" Search: %s  •  [esc] Cancel  •  [enter] Apply  •  [↑/↓] Move", m.query)
 	}
-	footerText := " [1/2/3] Views  •  [esc] Repo  •  [tab] Focus  •  [[/]] Tabs  •  [j/k] Scroll  •  [/] Search  •  [c] Checkout  •  [o] Web  •  [r] Refresh  •  [q] Quit"
+	filterHint := "[m/v/d] Filter"
+	if m.filter != filterAll {
+		filterHint = "[m/v/d] Filter (again clears)"
+	}
+	footerText := fmt.Sprintf(" [1/2/3] Views  •  [esc] Repo  •  [tab] Focus  •  [[/]] Tabs  •  [j/k] Scroll  •  [/] Search  •  %s  •  [c] Checkout  •  [o] Web  •  [r] Refresh  •  [q] Quit", filterHint)
 	if status := m.statusLine(); status != "" {
 		footerText = fmt.Sprintf(" %s | %s", status, footerText)
 	}

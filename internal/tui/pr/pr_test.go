@@ -3,6 +3,7 @@ package pr
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -22,12 +23,14 @@ import (
 // returns checkoutErr. This lets checkout/open/fetch result handling be
 // exercised without spawning `gh` or requiring a local git repository.
 type fakeBackend struct {
-	checkoutErr error
-	prs         []ghClient.PullRequest
-	prsErr      error
-	openErr     error
-	comments    []ghClient.PRComment
-	commentsErr error
+	checkoutErr    error
+	prs            []ghClient.PullRequest
+	prsErr         error
+	openErr        error
+	comments       []ghClient.PRComment
+	commentsErr    error
+	currentUser    string
+	currentUserErr error
 }
 
 func (f fakeBackend) RepoPRs(_ context.Context, owner, name string, _ bool) (ghClient.RepoContext, error) {
@@ -40,6 +43,10 @@ func (f fakeBackend) OpenPRInBrowser(_ context.Context, _, _ string, _ int) erro
 
 func (f fakeBackend) PRComments(_ context.Context, _, _ string, _ int, _ bool) ([]ghClient.PRComment, error) {
 	return f.comments, f.commentsErr
+}
+
+func (f fakeBackend) CurrentUser(context.Context) (string, error) {
+	return f.currentUser, f.currentUserErr
 }
 
 // comment builds a PRComment with the given author login and body.
@@ -896,6 +903,414 @@ func TestViewRendersTabLabels(t *testing.T) {
 	}
 }
 
+// prNumbers returns the PR numbers currently visible, in display order.
+func prNumbers(m Model) []int {
+	out := make([]int, len(m.filtered))
+	for i, idx := range m.filtered {
+		out[i] = m.ctx.PRs[idx].Number
+	}
+	return out
+}
+
+func TestFilterMine(t *testing.T) {
+	t.Parallel()
+	m := withPRs(0)
+	m.ctx.PRs = []ghClient.PullRequest{
+		{Number: 1, Title: "a", User: ghClient.User{Login: "octocat"}},
+		{Number: 2, Title: "b", User: ghClient.User{Login: "hubot"}},
+		{Number: 3, Title: "c", User: ghClient.User{Login: "OctoCat"}},
+	}
+	m.currentUser = "octocat"
+	m.filter = filterMine
+	m.recompute()
+	if got := prNumbers(m); !slices.Equal(got, []int{1, 3}) {
+		t.Fatalf("filtered = %v, want [1 3] (case-insensitive author match)", got)
+	}
+}
+
+func TestFilterNeedsReview(t *testing.T) {
+	t.Parallel()
+	m := withPRs(0)
+	m.ctx.PRs = []ghClient.PullRequest{
+		{Number: 1, Title: "a", RequestedReviewers: []ghClient.User{{Login: "octocat"}}},
+		{Number: 2, Title: "b", RequestedReviewers: []ghClient.User{{Login: "hubot"}}},
+		{Number: 3, Title: "c"},
+	}
+	m.currentUser = "octocat"
+	m.filter = filterNeedsReview
+	m.recompute()
+	if got := prNumbers(m); !slices.Equal(got, []int{1}) {
+		t.Fatalf("filtered = %v, want [1]", got)
+	}
+}
+
+func TestFilterDependabot(t *testing.T) {
+	t.Parallel()
+	m := withPRs(0)
+	m.ctx.PRs = []ghClient.PullRequest{
+		{Number: 1, Title: "a", User: ghClient.User{Login: "dependabot[bot]"}},
+		{Number: 2, Title: "b", User: ghClient.User{Login: "octocat"}},
+	}
+	m.filter = filterDependabot
+	m.recompute()
+	if got := prNumbers(m); !slices.Equal(got, []int{1}) {
+		t.Fatalf("filtered = %v, want [1]", got)
+	}
+}
+
+func TestFilterUserDependentEmptyWhenLoginUnresolved(t *testing.T) {
+	t.Parallel()
+	m := withPRs(0)
+	m.ctx.PRs = []ghClient.PullRequest{{Number: 1, User: ghClient.User{Login: "octocat"}}}
+	m.currentUser = ""
+	m.filter = filterMine
+	m.recompute()
+	if got := prNumbers(m); len(got) != 0 {
+		t.Fatalf("filtered = %v, want empty when login unresolved", got)
+	}
+}
+
+func TestFilterComposesWithSearch(t *testing.T) {
+	t.Parallel()
+	m := withPRs(0)
+	m.ctx.PRs = []ghClient.PullRequest{
+		{Number: 1, Title: "add auth", User: ghClient.User{Login: "octocat"}},
+		{Number: 2, Title: "fix auth bug", User: ghClient.User{Login: "octocat"}},
+		{Number: 3, Title: "fix auth bug", User: ghClient.User{Login: "hubot"}},
+	}
+	m.currentUser = "octocat"
+	m.filter = filterMine
+	m.query = "bug"
+	m.recompute()
+	if got := prNumbers(m); !slices.Equal(got, []int{2}) {
+		t.Fatalf("filtered = %v, want [2] (filter ∩ search)", got)
+	}
+}
+
+func TestFilterAllUnchanged(t *testing.T) {
+	t.Parallel()
+	m := withPRs(3)
+	m.filter = filterAll
+	m.recompute()
+	if got := len(m.filtered); got != 3 {
+		t.Fatalf("filtered len = %d, want 3", got)
+	}
+}
+
+func TestCurrentUserMsgStoresLogin(t *testing.T) {
+	t.Parallel()
+	m := withPRs(2)
+	updated, _ := m.Update(currentUserMsg("octocat"))
+	if got := updated.(Model).currentUser; got != "octocat" {
+		t.Fatalf("currentUser = %q, want octocat", got)
+	}
+}
+
+func TestCurrentUserMsgReappliesActiveFilter(t *testing.T) {
+	t.Parallel()
+	m := withPRs(0)
+	m.ctx.PRs = []ghClient.PullRequest{
+		{Number: 1, Title: "a", User: ghClient.User{Login: "octocat"}},
+		{Number: 2, Title: "b", User: ghClient.User{Login: "hubot"}},
+	}
+	m.filter = filterMine
+	m.recompute() // currentUser still "" → nothing matches
+	if len(m.filtered) != 0 {
+		t.Fatalf("precondition: want 0 filtered before login resolves, got %d", len(m.filtered))
+	}
+	updated, _ := m.Update(currentUserMsg("octocat"))
+	if got := prNumbers(updated.(Model)); !slices.Equal(got, []int{1}) {
+		t.Fatalf("filtered = %v, want [1] after login resolves", got)
+	}
+}
+
+func TestCurrentUserMsgSkipsRecomputeWhenFilterNotUserDependent(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.filter = filterAll
+	m.ctx.PRs[0].Body = strings.Repeat("line\n", 200) // tall body so it can scroll
+	m.updateViewportContent()
+	m.viewport.ScrollDown(50)
+	if m.viewport.AtTop() {
+		t.Fatal("precondition: expected viewport scrolled away from top")
+	}
+	updated, _ := m.Update(currentUserMsg("octocat"))
+	um := updated.(Model)
+	if um.currentUser != "octocat" {
+		t.Fatalf("currentUser = %q, want octocat (login still stored)", um.currentUser)
+	}
+	if um.viewport.AtTop() {
+		t.Fatal("filterAll: currentUserMsg must not recompute (viewport scroll should be preserved)")
+	}
+}
+
+func TestCurrentUserMsgTargetView(t *testing.T) {
+	t.Parallel()
+	if currentUserMsg("x").TargetView() != screen.ViewPR {
+		t.Fatal("currentUserMsg must target the PR view")
+	}
+}
+
+func TestInitEmitsCurrentUserCmd(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{currentUser: "octocat"}, "octocat", "hello", 100, 40)
+	msg := m.Init()()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("Init() msg = %T, want tea.BatchMsg", msg)
+	}
+	var sawCurrentUser bool
+	for _, c := range batch {
+		if _, ok := c().(currentUserMsg); ok {
+			sawCurrentUser = true
+		}
+	}
+	if !sawCurrentUser {
+		t.Fatal("Init did not emit a command resolving the current user")
+	}
+}
+
+func TestCurrentUserCmdReturnsLogin(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{currentUser: "octocat"}, "octocat", "hello", 100, 40)
+	msg := m.currentUserCmd()()
+	cu, ok := msg.(currentUserMsg)
+	if !ok {
+		t.Fatalf("got %T, want currentUserMsg", msg)
+	}
+	if string(cu) != "octocat" {
+		t.Fatalf("login = %q, want octocat", string(cu))
+	}
+}
+
+func TestCurrentUserCmdEmptyOnError(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{currentUserErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	msg := m.currentUserCmd()()
+	cu, ok := msg.(currentUserMsg)
+	if !ok {
+		t.Fatalf("got %T, want currentUserMsg", msg)
+	}
+	if string(cu) != "" {
+		t.Fatalf("login = %q, want empty on error", string(cu))
+	}
+}
+
+// withWideFilteredPRs builds a loaded, very wide PR screen (so badges/messages
+// are not truncated in the narrow left pane) with the given PRs and current user,
+// then recomputes.
+func withWideFilteredPRs(currentUser string, prs ...ghClient.PullRequest) Model {
+	m := New(fakeBackend{}, "octocat", "hello", 300, 40)
+	m.loading = false
+	m.currentUser = currentUser
+	m.ctx.PRs = prs
+	m.recompute()
+	return m
+}
+
+func TestFilterKeyAppliesAndToggles(t *testing.T) {
+	t.Parallel()
+	m := withWideFilteredPRs("octocat",
+		ghClient.PullRequest{Number: 1, Title: "a", User: ghClient.User{Login: "octocat"}},
+		ghClient.PullRequest{Number: 2, Title: "b", User: ghClient.User{Login: "hubot"}},
+	)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	um := updated.(Model)
+	if um.filter != filterMine {
+		t.Fatalf("filter = %v, want filterMine", um.filter)
+	}
+	if got := prNumbers(um); !slices.Equal(got, []int{1}) {
+		t.Fatalf("filtered = %v, want [1]", got)
+	}
+	updated2, _ := um.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	um2 := updated2.(Model)
+	if um2.filter != filterAll {
+		t.Fatalf("filter = %v, want filterAll after toggle", um2.filter)
+	}
+	if len(um2.filtered) != 2 {
+		t.Fatalf("filtered len = %d, want 2 after clear", len(um2.filtered))
+	}
+}
+
+func TestFilterKeySwitchesDirectly(t *testing.T) {
+	t.Parallel()
+	m := withWideFilteredPRs("octocat",
+		ghClient.PullRequest{Number: 1, Title: "a", User: ghClient.User{Login: "dependabot[bot]"}},
+		ghClient.PullRequest{Number: 2, Title: "b", User: ghClient.User{Login: "octocat"}},
+	)
+	m.filter = filterMine
+	m.recompute()
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	um := updated.(Model)
+	if um.filter != filterDependabot {
+		t.Fatalf("filter = %v, want filterDependabot", um.filter)
+	}
+	if got := prNumbers(um); !slices.Equal(got, []int{1}) {
+		t.Fatalf("filtered = %v, want [1]", got)
+	}
+}
+
+func TestFilterKeyResetsCursor(t *testing.T) {
+	t.Parallel()
+	m := withWideFilteredPRs("octocat",
+		ghClient.PullRequest{Number: 1, Title: "a", User: ghClient.User{Login: "octocat"}},
+		ghClient.PullRequest{Number: 2, Title: "b", User: ghClient.User{Login: "octocat"}},
+		ghClient.PullRequest{Number: 3, Title: "c", User: ghClient.User{Login: "octocat"}},
+	)
+	m.cursor = 2
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	if got := updated.(Model).cursor; got != 0 {
+		t.Fatalf("cursor = %d, want 0 after filter change", got)
+	}
+}
+
+func TestFilterKeyIgnoredWhileLoading(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40) // loading == true
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	if updated.(Model).filter != filterAll {
+		t.Fatal("filter must not change while loading")
+	}
+}
+
+func TestFilterBadgeRendered(t *testing.T) {
+	t.Parallel()
+	m := withWideFilteredPRs("octocat",
+		ghClient.PullRequest{Number: 1, Title: "a", User: ghClient.User{Login: "octocat"}},
+		ghClient.PullRequest{Number: 2, Title: "b", User: ghClient.User{Login: "hubot"}},
+	)
+	m.filter = filterMine
+	m.recompute()
+	if v := m.View(); !strings.Contains(v, "filter: My PRs (1/2)") {
+		t.Fatalf("expected filter badge, got:\n%s", v)
+	}
+}
+
+func TestFilterAndSearchBadgeRendered(t *testing.T) {
+	t.Parallel()
+	m := withWideFilteredPRs("octocat",
+		ghClient.PullRequest{Number: 1, Title: "add auth", User: ghClient.User{Login: "octocat"}},
+		ghClient.PullRequest{Number: 2, Title: "fix bug", User: ghClient.User{Login: "octocat"}},
+	)
+	m.filter = filterMine
+	m.query = "auth"
+	m.recompute()
+	if v := m.View(); !strings.Contains(v, `filter: My PRs · "auth" (1/2)`) {
+		t.Fatalf("expected combined badge, got:\n%s", v)
+	}
+}
+
+func TestFilterFooterHint(t *testing.T) {
+	t.Parallel()
+	m := withPRs(2)
+	if v := m.View(); !strings.Contains(v, "[m/v/d] Filter") {
+		t.Fatalf("expected filter footer hint, got:\n%s", v)
+	}
+	m.filter = filterMine
+	m.recompute()
+	if v := m.View(); !strings.Contains(v, "again clears") {
+		t.Fatalf("expected clear hint when a filter is active, got:\n%s", v)
+	}
+}
+
+func TestFilterEmptyStateMessage(t *testing.T) {
+	t.Parallel()
+	m := withWideFilteredPRs("octocat",
+		ghClient.PullRequest{Number: 1, Title: "a", User: ghClient.User{Login: "hubot"}},
+	)
+	m.filter = filterMine
+	m.recompute()
+	if v := m.View(); !strings.Contains(v, "No PRs match filter: My PRs") {
+		t.Fatalf("expected filter empty-state, got:\n%s", v)
+	}
+}
+
+func TestFilterEmptyStateUnresolvedLogin(t *testing.T) {
+	t.Parallel()
+	m := withWideFilteredPRs("",
+		ghClient.PullRequest{Number: 1, Title: "a", User: ghClient.User{Login: "hubot"}},
+	)
+	m.filter = filterNeedsReview
+	m.recompute()
+	if v := m.View(); !strings.Contains(v, "couldn't determine your GitHub login") {
+		t.Fatalf("expected unresolved-login hint, got:\n%s", v)
+	}
+}
+
+func TestFilterReviewKeyApplies(t *testing.T) {
+	t.Parallel()
+	m := withWideFilteredPRs("octocat",
+		ghClient.PullRequest{Number: 1, Title: "a", RequestedReviewers: []ghClient.User{{Login: "octocat"}}},
+		ghClient.PullRequest{Number: 2, Title: "b", User: ghClient.User{Login: "octocat"}},
+	)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	um := updated.(Model)
+	if um.filter != filterNeedsReview {
+		t.Fatalf("filter = %v, want filterNeedsReview", um.filter)
+	}
+	if got := prNumbers(um); !slices.Equal(got, []int{1}) {
+		t.Fatalf("filtered = %v, want [1]", got)
+	}
+}
+
+func TestFilterKeyIgnoredOnFatalErrorScreen(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40)
+	fe, _ := m.Update(screen.FetchErrMsg{View: screen.ViewPR, Err: errors.New("boom")})
+	m = fe.(Model) // fatal error screen: loading cleared, fetchErr set, no PRs
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	if updated.(Model).filter != filterAll {
+		t.Fatal("filter must not change on the fatal error screen")
+	}
+}
+
+func TestFilterDependabotBadgeRendered(t *testing.T) {
+	t.Parallel()
+	m := withWideFilteredPRs("octocat",
+		ghClient.PullRequest{Number: 1, Title: "a", User: ghClient.User{Login: "dependabot[bot]"}},
+		ghClient.PullRequest{Number: 2, Title: "b", User: ghClient.User{Login: "octocat"}},
+	)
+	m.filter = filterDependabot
+	m.recompute()
+	if v := m.View(); !strings.Contains(v, "filter: Dependabot (1/2)") {
+		t.Fatalf("expected Dependabot badge, got:\n%s", v)
+	}
+}
+
+func TestFilterAndSearchEmptyStateUnresolvedLogin(t *testing.T) {
+	t.Parallel()
+	m := withWideFilteredPRs("",
+		ghClient.PullRequest{Number: 1, Title: "add auth", User: ghClient.User{Login: "hubot"}},
+	)
+	m.filter = filterMine
+	m.query = "zzz"
+	m.recompute()
+	if v := m.View(); !strings.Contains(v, "couldn't determine your GitHub login") {
+		t.Fatalf("expected unresolved-login hint in combined filter+query empty state, got:\n%s", v)
+	}
+}
+
+func TestListPaneKeysDoNotScrollDetailViewport(t *testing.T) {
+	t.Parallel()
+	tall := strings.Repeat("line\n", 300)
+	// Keys the bubbles viewport binds to downward scrolling (d=half-page, j=line,
+	// f=page). In the LIST pane these must NOT scroll the detail viewport. PR #1 is
+	// authored by dependabot[bot] (and stays first/selected under the cursor) so
+	// that pressing 'd' — which also toggles the Dependabot quick filter — still
+	// leaves it visible with its tall body; otherwise the filter would empty the
+	// viewport and mask the very scroll bug this test targets.
+	for _, r := range []rune{'d', 'j', 'f'} {
+		m := withWideFilteredPRs("octocat",
+			ghClient.PullRequest{Number: 1, Title: "a", Body: tall, User: ghClient.User{Login: "dependabot[bot]"}},
+			ghClient.PullRequest{Number: 2, Title: "b", Body: tall, User: ghClient.User{Login: "octocat"}},
+		)
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		if got := updated.(Model); !got.viewport.AtTop() {
+			t.Errorf("key %q in list focus scrolled the detail viewport (YOffset=%d); want top", r, got.viewport.YOffset)
+		}
+	}
+}
+
 func TestDescriptionTabShowsBody(t *testing.T) {
 	t.Parallel()
 	m := withPRs(1)
@@ -1078,5 +1493,38 @@ func TestCancelSearchFetchesComments(t *testing.T) {
 	}
 	if m.comments[1].status != commentsLoading {
 		t.Fatalf("cancel-search to a new PR on the Comments tab did not fetch; got %d", m.comments[1].status)
+	}
+}
+
+func TestDetailPaneStillScrollsWhenFocused(t *testing.T) {
+	t.Parallel()
+	tall := strings.Repeat("line\n", 300)
+	// Authored by dependabot[bot] so toggling the Dependabot filter (also bound to
+	// 'd') keeps this PR visible instead of emptying the viewport, letting the
+	// scroll this test checks for actually be observable.
+	m := withWideFilteredPRs("octocat",
+		ghClient.PullRequest{Number: 1, Title: "a", Body: tall, User: ghClient.User{Login: "dependabot[bot]"}},
+	)
+	m.focus = focusDetails
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}}) // half-page-down when details focused
+	if got := updated.(Model); got.viewport.AtTop() {
+		t.Fatal("detail pane focused: 'd' should scroll the detail viewport")
+	}
+}
+
+func TestFilterKeysIgnoredWhenDetailFocused(t *testing.T) {
+	t.Parallel()
+	m := withWideFilteredPRs("octocat",
+		ghClient.PullRequest{Number: 1, Title: "a", User: ghClient.User{Login: "dependabot[bot]"}},
+		ghClient.PullRequest{Number: 2, Title: "b", User: ghClient.User{Login: "octocat"}},
+	)
+	m.focus = focusDetails
+	// Filters are a list-pane action; in the detail pane these keys drive viewport
+	// scrolling (e.g. "d" = half-page-down) and must not change the active filter.
+	for _, r := range []rune{'m', 'v', 'd'} {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		if got := updated.(Model).filter; got != filterAll {
+			t.Fatalf("key %q in detail focus changed filter to %v; want filterAll (filters are list-pane only)", r, got)
+		}
 	}
 }

@@ -36,21 +36,24 @@ type GitHubConfig struct {
 
 // KeysConfig holds the resolved key bindings: one non-empty []string per action.
 type KeysConfig struct {
-	Quit       []string
-	Back       []string
-	Up         []string
-	Down       []string
-	Select     []string
-	Refresh    []string
-	TogglePane []string
-	Checkout   []string
-	Open       []string
-	Search     []string
-	NavPRs     []string
-	NavIssues  []string
-	NavActions []string
-	PrevTab    []string
-	NextTab    []string
+	Quit             []string
+	Back             []string
+	Up               []string
+	Down             []string
+	Select           []string
+	Refresh          []string
+	TogglePane       []string
+	Checkout         []string
+	Open             []string
+	Search           []string
+	NavPRs           []string
+	NavIssues        []string
+	NavActions       []string
+	FilterMine       []string
+	FilterReview     []string
+	FilterDependabot []string
+	PrevTab          []string
+	NextTab          []string
 }
 
 // ThemeConfig holds the resolved, validated color per semantic role.
@@ -72,21 +75,24 @@ func Default() Config {
 			RepoPageSize:      50,
 		},
 		Keys: KeysConfig{
-			Quit:       []string{"q"},
-			Back:       []string{"esc", "backspace"},
-			Up:         []string{"up", "k"},
-			Down:       []string{"down", "j"},
-			Select:     []string{"enter"},
-			Refresh:    []string{"r"},
-			TogglePane: []string{"tab", "shift+tab"},
-			Checkout:   []string{"c"},
-			Open:       []string{"o"},
-			Search:     []string{"/"},
-			NavPRs:     []string{"1"},
-			NavIssues:  []string{"2"},
-			NavActions: []string{"3"},
-			PrevTab:    []string{"["},
-			NextTab:    []string{"]"},
+			Quit:             []string{"q"},
+			Back:             []string{"esc", "backspace"},
+			Up:               []string{"up", "k"},
+			Down:             []string{"down", "j"},
+			Select:           []string{"enter"},
+			Refresh:          []string{"r"},
+			TogglePane:       []string{"tab", "shift+tab"},
+			Checkout:         []string{"c"},
+			Open:             []string{"o"},
+			Search:           []string{"/"},
+			NavPRs:           []string{"1"},
+			NavIssues:        []string{"2"},
+			NavActions:       []string{"3"},
+			FilterMine:       []string{"m"},
+			FilterReview:     []string{"v"},
+			FilterDependabot: []string{"d"},
+			PrevTab:          []string{"["},
+			NextTab:          []string{"]"},
 		},
 		Theme: ThemeConfig{
 			Accent:   "62",
@@ -126,21 +132,24 @@ func (k *keyList) UnmarshalYAML(value *yaml.Node) error {
 }
 
 type rawKeys struct {
-	Quit       *keyList `yaml:"quit"`
-	Back       *keyList `yaml:"back"`
-	Up         *keyList `yaml:"up"`
-	Down       *keyList `yaml:"down"`
-	Select     *keyList `yaml:"select"`
-	Refresh    *keyList `yaml:"refresh"`
-	TogglePane *keyList `yaml:"toggle_pane"`
-	Checkout   *keyList `yaml:"checkout"`
-	Open       *keyList `yaml:"open"`
-	Search     *keyList `yaml:"search"`
-	NavPRs     *keyList `yaml:"nav_prs"`
-	NavIssues  *keyList `yaml:"nav_issues"`
-	NavActions *keyList `yaml:"nav_actions"`
-	PrevTab    *keyList `yaml:"prev_tab"`
-	NextTab    *keyList `yaml:"next_tab"`
+	Quit             *keyList `yaml:"quit"`
+	Back             *keyList `yaml:"back"`
+	Up               *keyList `yaml:"up"`
+	Down             *keyList `yaml:"down"`
+	Select           *keyList `yaml:"select"`
+	Refresh          *keyList `yaml:"refresh"`
+	TogglePane       *keyList `yaml:"toggle_pane"`
+	Checkout         *keyList `yaml:"checkout"`
+	Open             *keyList `yaml:"open"`
+	Search           *keyList `yaml:"search"`
+	NavPRs           *keyList `yaml:"nav_prs"`
+	NavIssues        *keyList `yaml:"nav_issues"`
+	NavActions       *keyList `yaml:"nav_actions"`
+	FilterMine       *keyList `yaml:"filter_mine"`
+	FilterReview     *keyList `yaml:"filter_review"`
+	FilterDependabot *keyList `yaml:"filter_dependabot"`
+	PrevTab          *keyList `yaml:"prev_tab"`
+	NextTab          *keyList `yaml:"next_tab"`
 }
 
 type rawTheme struct {
@@ -242,6 +251,9 @@ keys:
   # nav_prs: ["1"]
   # nav_issues: ["2"]
   # nav_actions: ["3"]
+  # filter_mine: [m]              # show only PRs you authored
+  # filter_review: [v]            # show only PRs awaiting your review
+  # filter_dependabot: [d]        # show only Dependabot PRs
   # prev_tab: ["["]
   # next_tab: ["]"]
 theme:
@@ -332,6 +344,9 @@ func applyKeys(cfg *Config, rk *rawKeys) {
 		{"nav_prs", rk.NavPRs, &cfg.Keys.NavPRs},
 		{"nav_issues", rk.NavIssues, &cfg.Keys.NavIssues},
 		{"nav_actions", rk.NavActions, &cfg.Keys.NavActions},
+		{"filter_mine", rk.FilterMine, &cfg.Keys.FilterMine},
+		{"filter_review", rk.FilterReview, &cfg.Keys.FilterReview},
+		{"filter_dependabot", rk.FilterDependabot, &cfg.Keys.FilterDependabot},
 		{"prev_tab", rk.PrevTab, &cfg.Keys.PrevTab},
 		{"next_tab", rk.NextTab, &cfg.Keys.NextTab},
 	} {

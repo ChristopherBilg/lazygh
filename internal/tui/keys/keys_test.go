@@ -92,3 +92,28 @@ func TestConfigureOverridesTabKeys(t *testing.T) {
 		t.Error("after remap, ']' should no longer match NextTab")
 	}
 }
+
+func TestDefaultFilterBindings(t *testing.T) {
+	if !key.Matches(runeMsg('m'), Map.FilterMine) {
+		t.Error("default FilterMine should match 'm'")
+	}
+	if !key.Matches(runeMsg('v'), Map.FilterReview) {
+		t.Error("default FilterReview should match 'v'")
+	}
+	if !key.Matches(runeMsg('d'), Map.FilterDependabot) {
+		t.Error("default FilterDependabot should match 'd'")
+	}
+}
+
+func TestConfigureOverridesFilterMine(t *testing.T) {
+	t.Cleanup(func() { Configure(config.Default().Keys) })
+	kc := config.Default().Keys
+	kc.FilterMine = []string{"M"}
+	Configure(kc)
+	if !key.Matches(runeMsg('M'), Map.FilterMine) {
+		t.Error("after Configure, FilterMine should match 'M'")
+	}
+	if key.Matches(runeMsg('m'), Map.FilterMine) {
+		t.Error("after remap, 'm' should no longer match FilterMine")
+	}
+}
