@@ -160,7 +160,7 @@ func (m Model) updateSearch(msg tea.KeyMsg) (screen.Model, tea.Cmd) {
 		m.query = ""
 		m.cursor = 0
 		m.recompute()
-		return m, nil
+		return m, m.maybeFetchComments()
 	case tea.KeyUp:
 		var cmd tea.Cmd
 		if m.cursor > 0 {
@@ -187,6 +187,9 @@ func (m Model) updateSearch(msg tea.KeyMsg) (screen.Model, tea.Cmd) {
 		m.query = m.input.Value()
 		m.cursor = 0 // best match to the top on each query change
 		m.recompute()
+		// A query-driven recompute can change the selected PR; fetch its comments
+		// if the Comments tab is active (batched with the input's own command).
+		return m, tea.Batch(cmd, m.maybeFetchComments())
 	}
 	return m, cmd
 }

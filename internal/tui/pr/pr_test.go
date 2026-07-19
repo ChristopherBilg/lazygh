@@ -1050,3 +1050,33 @@ func TestSelectionChangeFetchesNewPRComments(t *testing.T) {
 		t.Fatal("activeTab must persist across PR changes")
 	}
 }
+
+func TestTypingSelectionChangeFetchesComments(t *testing.T) {
+	t.Parallel()
+	m := withTitledPRs("Add docs", "Fix cache") // #1 docs, #2 cache
+	m.activeTab = tabs.Comments
+	m.comments[1] = commentState{status: commentsLoaded} // #1 already loaded
+	m = typeRunes(enterSearch(t, m), "cache")            // best match -> #2 (unloaded)
+	if pr, ok := m.selectedPR(); !ok || pr.Number != 2 {
+		t.Fatalf("expected PR #2 selected after typing, got %+v ok=%v", pr, ok)
+	}
+	if m.comments[2].status != commentsLoading {
+		t.Fatalf("typing to a new PR on the Comments tab did not fetch; got %d", m.comments[2].status)
+	}
+}
+
+func TestCancelSearchFetchesComments(t *testing.T) {
+	t.Parallel()
+	m := withTitledPRs("Alpha", "Beta") // #1, #2
+	m.activeTab = tabs.Comments
+	m.cursor = 1                                         // viewing #2
+	m.comments[2] = commentState{status: commentsLoaded} // #2 loaded
+	esc, _ := enterSearch(t, m).Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = esc.(Model)
+	if pr, ok := m.selectedPR(); !ok || pr.Number != 1 {
+		t.Fatalf("expected PR #1 selected after Esc reset, got %+v ok=%v", pr, ok)
+	}
+	if m.comments[1].status != commentsLoading {
+		t.Fatalf("cancel-search to a new PR on the Comments tab did not fetch; got %d", m.comments[1].status)
+	}
+}
