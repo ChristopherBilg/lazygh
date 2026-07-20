@@ -29,6 +29,8 @@ type fakeBackend struct {
 	openErr        error
 	comments       []ghClient.PRComment
 	commentsErr    error
+	diff           string
+	diffErr        error
 	currentUser    string
 	currentUserErr error
 }
@@ -43,6 +45,10 @@ func (f fakeBackend) OpenPRInBrowser(_ context.Context, _, _ string, _ int) erro
 
 func (f fakeBackend) PRComments(_ context.Context, _, _ string, _ int, _ bool) ([]ghClient.PRComment, error) {
 	return f.comments, f.commentsErr
+}
+
+func (f fakeBackend) PRDiff(_ context.Context, _, _ string, _ int, _ bool) (string, error) {
+	return f.diff, f.diffErr
 }
 
 func (f fakeBackend) CurrentUser(context.Context) (string, error) {
@@ -1321,16 +1327,6 @@ func TestDescriptionTabShowsBody(t *testing.T) {
 	}
 }
 
-func TestFilesChangedTabShowsPlaceholder(t *testing.T) {
-	t.Parallel()
-	m := withPRs(1)
-	m.activeTab = tabs.FilesChanged
-	m.updateViewportContent()
-	if v := m.View(); !strings.Contains(v, "separate work item") {
-		t.Fatalf("Files Changed tab missing placeholder:\n%s", v)
-	}
-}
-
 func TestCommentsTabLoadingState(t *testing.T) {
 	t.Parallel()
 	m := withPRs(1)
@@ -1526,5 +1522,188 @@ func TestFilterKeysIgnoredWhenDetailFocused(t *testing.T) {
 		if got := updated.(Model).filter; got != filterAll {
 			t.Fatalf("key %q in detail focus changed filter to %v; want filterAll (filters are list-pane only)", r, got)
 		}
+	}
+}
+
+func TestFetchDiffCmdSuccessHighlights(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{diff: "diff --git a/x b/x\n@@ -0,0 +1 @@\n+added\n"}, "octocat", "hello", 100, 40)
+	got, ok := m.fetchDiffCmd(7)().(prDiffMsg)
+	if !ok {
+		t.Fatal("expected prDiffMsg")
+	}
+	if got.prNumber != 7 {
+		t.Fatalf("prNumber = %d, want 7", got.prNumber)
+	}
+	if got.content == "" {
+		t.Fatal("expected non-empty highlighted diff content")
+	}
+}
+
+func TestFetchDiffCmdEmptyDiff(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{diff: "   \n"}, "octocat", "hello", 100, 40)
+	got, ok := m.fetchDiffCmd(7)().(prDiffMsg)
+	if !ok {
+		t.Fatal("expected prDiffMsg")
+	}
+	if got.content != "" {
+		t.Fatalf("content = %q, want empty for a blank diff", got.content)
+	}
+}
+
+func TestFetchDiffCmdError(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{diffErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	got, ok := m.fetchDiffCmd(7)().(prDiffErrMsg)
+	if !ok {
+		t.Fatal("expected prDiffErrMsg")
+	}
+	if got.prNumber != 7 {
+		t.Fatalf("prNumber = %d, want 7", got.prNumber)
+	}
+}
+
+func TestDiffMsgsTargetPRView(t *testing.T) {
+	t.Parallel()
+	if (prDiffMsg{}).TargetView() != screen.ViewPR || (prDiffErrMsg{}).TargetView() != screen.ViewPR {
+		t.Fatal("diff messages must target the PR view")
+	}
+}
+
+func TestPRDiffMsgStoresLoadedState(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	updated, _ := m.Update(prDiffMsg{prNumber: 1, content: "rendered"})
+	if st := updated.(Model).diffs[1]; st.status != diffLoaded || st.content != "rendered" {
+		t.Fatalf("diffs[1] = %+v, want loaded with content", st)
+	}
+}
+
+func TestPRDiffErrMsgStoresErrorState(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	updated, _ := m.Update(prDiffErrMsg{prNumber: 1, err: errors.New("boom")})
+	if st := updated.(Model).diffs[1]; st.status != diffErrored || st.err == nil {
+		t.Fatalf("diffs[1] = %+v, want errored with err", st)
+	}
+}
+
+func TestMaybeFetchDiffSkipsNonFilesChangedTab(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1) // Description
+	if cmd := m.maybeFetchDiff(); cmd != nil {
+		t.Fatal("expected nil command off the Files Changed tab")
+	}
+	if len(m.diffs) != 0 {
+		t.Fatal("expected no diff state created off the Files Changed tab")
+	}
+}
+
+func TestMaybeFetchDiffTriggersWhenNotLoaded(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.activeTab = tabs.FilesChanged
+	if cmd := m.maybeFetchDiff(); cmd == nil {
+		t.Fatal("expected a fetch command when diff not loaded")
+	}
+	if m.diffs[1].status != diffLoading {
+		t.Fatalf("diffs[1].status = %d, want loading", m.diffs[1].status)
+	}
+}
+
+func TestMaybeFetchDiffSkipsLoaded(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.activeTab = tabs.FilesChanged
+	m.diffs[1] = diffState{status: diffLoaded}
+	if cmd := m.maybeFetchDiff(); cmd != nil {
+		t.Fatal("expected nil command when diff already loaded")
+	}
+}
+
+func TestMaybeFetchDiffRetriesAfterError(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.activeTab = tabs.FilesChanged
+	m.diffs[1] = diffState{status: diffErrored, err: errors.New("boom")}
+	if cmd := m.maybeFetchDiff(); cmd == nil {
+		t.Fatal("expected a retry command for an errored PR")
+	}
+	if m.diffs[1].status != diffLoading {
+		t.Fatalf("diffs[1].status = %d, want loading after retry", m.diffs[1].status)
+	}
+}
+
+func TestEnteringFilesChangedTabTriggersDiffFetch(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	u, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}}) // Description -> FilesChanged
+	m = u.(Model)
+	if m.activeTab != tabs.FilesChanged {
+		t.Fatalf("activeTab = %d, want FilesChanged", m.activeTab)
+	}
+	if m.diffs[1].status != diffLoading {
+		t.Fatalf("entering Files Changed did not set diff loading; got %d", m.diffs[1].status)
+	}
+}
+
+func TestFilesChangedTabShowsLoadingState(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.activeTab = tabs.FilesChanged
+	m.updateViewportContent()
+	if v := m.View(); !strings.Contains(v, "Loading diff") {
+		t.Fatalf("Files Changed tab missing loading state:\n%s", v)
+	}
+}
+
+func TestFilesChangedTabRendersLoadedDiff(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.activeTab = tabs.FilesChanged
+	m.diffs[1] = diffState{status: diffLoaded, content: "RENDERED-DIFF-BODY"}
+	m.updateViewportContent()
+	if v := m.View(); !strings.Contains(v, "RENDERED-DIFF-BODY") {
+		t.Fatalf("Files Changed tab missing rendered diff:\n%s", v)
+	}
+}
+
+func TestFilesChangedTabEmptyState(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.activeTab = tabs.FilesChanged
+	m.diffs[1] = diffState{status: diffLoaded, content: ""}
+	m.updateViewportContent()
+	if v := m.View(); !strings.Contains(v, "No changes in this pull request") {
+		t.Fatalf("Files Changed tab missing empty state:\n%s", v)
+	}
+}
+
+func TestFilesChangedTabErrorState(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.activeTab = tabs.FilesChanged
+	m.diffs[1] = diffState{status: diffErrored, err: errors.New("diff unavailable")}
+	m.updateViewportContent()
+	if v := m.View(); !strings.Contains(v, "Failed to load diff") || !strings.Contains(v, "diff unavailable") {
+		t.Fatalf("Files Changed tab missing error state:\n%s", v)
+	}
+}
+
+func TestCommentsTabStillTriggersFetchAfterRefactor(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	s1, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}})            // -> FilesChanged
+	s2, cmd := s1.(Model).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}}) // -> Comments
+	um := s2.(Model)
+	if um.activeTab != tabs.Comments {
+		t.Fatalf("activeTab = %d, want Comments", um.activeTab)
+	}
+	if cmd == nil {
+		t.Fatal("expected a comments fetch command on switching to Comments (refactor regression)")
+	}
+	if um.comments[1].status != commentsLoading {
+		t.Fatalf("comments[1].status = %d, want loading", um.comments[1].status)
 	}
 }

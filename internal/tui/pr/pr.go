@@ -19,6 +19,7 @@ import (
 	ghClient "github.com/ChristopherBilg/lazygh/internal/github"
 	"github.com/ChristopherBilg/lazygh/internal/tui/keys"
 	"github.com/ChristopherBilg/lazygh/internal/tui/nav"
+	"github.com/ChristopherBilg/lazygh/internal/tui/pr/diff"
 	"github.com/ChristopherBilg/lazygh/internal/tui/pr/tabs"
 	"github.com/ChristopherBilg/lazygh/internal/tui/screen"
 	"github.com/ChristopherBilg/lazygh/internal/tui/styles"
@@ -49,6 +50,25 @@ type commentState struct {
 	status commentStatus
 	list   []ghClient.PRComment
 	err    error
+}
+
+// diffStatus tracks the lifecycle of a PR's lazily-loaded diff.
+type diffStatus int
+
+// Diff load lifecycle states, in the order a PR's diff progresses through.
+const (
+	diffNotLoaded diffStatus = iota
+	diffLoading
+	diffLoaded
+	diffErrored
+)
+
+// diffState is the per-PR diff load state stored in Model.diffs. content holds the
+// already-highlighted diff (rendered off the UI thread in fetchDiffCmd).
+type diffState struct {
+	status  diffStatus
+	content string
+	err     error
 }
 
 // prFilter is the active quick filter applied to the PR list.
@@ -85,6 +105,7 @@ type Backend interface {
 	CheckoutPR(ctx context.Context, owner, name string, prNumber int) error
 	OpenPRInBrowser(ctx context.Context, owner, name string, prNumber int) error
 	PRComments(ctx context.Context, owner, name string, prNumber int, force bool) ([]ghClient.PRComment, error)
+	PRDiff(ctx context.Context, owner, name string, prNumber int, force bool) (string, error)
 	CurrentUser(ctx context.Context) (string, error)
 }
 
@@ -110,6 +131,7 @@ type Model struct {
 	height      int
 	ready       bool
 	comments    map[int]commentState // per-PR comment load state, keyed by PR number
+	diffs       map[int]diffState    // per-PR diff load state, keyed by PR number
 	activeTab   tabs.Tab             // selected right-pane tab; persists across PR changes
 }
 
@@ -132,6 +154,7 @@ func New(backend Backend, owner, name string, width, height int) Model {
 		width:    width,
 		height:   height,
 		comments: make(map[int]commentState),
+		diffs:    make(map[int]diffState),
 	}
 	m.resizeViewport()
 	return m
@@ -247,12 +270,12 @@ func (m Model) updateSearch(msg tea.KeyMsg) (screen.Model, tea.Cmd) {
 		m.query = ""
 		m.cursor = 0
 		m.recompute()
-		return m, m.maybeFetchComments()
+		return m, m.maybeFetchActiveTab()
 	case tea.KeyUp:
 		var cmd tea.Cmd
 		if m.cursor > 0 {
 			m.cursor--
-			cmd = m.maybeFetchComments()
+			cmd = m.maybeFetchActiveTab()
 			m.updateViewportContent()
 			m.viewport.GotoTop()
 		}
@@ -261,7 +284,7 @@ func (m Model) updateSearch(msg tea.KeyMsg) (screen.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		if m.cursor < len(m.filtered)-1 {
 			m.cursor++
-			cmd = m.maybeFetchComments()
+			cmd = m.maybeFetchActiveTab()
 			m.updateViewportContent()
 			m.viewport.GotoTop()
 		}
@@ -274,9 +297,9 @@ func (m Model) updateSearch(msg tea.KeyMsg) (screen.Model, tea.Cmd) {
 		m.query = m.input.Value()
 		m.cursor = 0 // best match to the top on each query change
 		m.recompute()
-		// A query-driven recompute can change the selected PR; fetch its comments
-		// if the Comments tab is active (batched with the input's own command).
-		return m, tea.Batch(cmd, m.maybeFetchComments())
+		// A query-driven recompute can change the selected PR; fetch the active
+		// tab's content for it (batched with the input's own command).
+		return m, tea.Batch(cmd, m.maybeFetchActiveTab())
 	}
 	return m, cmd
 }
@@ -351,6 +374,40 @@ func (m Model) fetchCommentsCmd(prNumber int) tea.Cmd {
 	}
 }
 
+// prDiffMsg carries a fetched, highlighted diff for a specific PR.
+type prDiffMsg struct {
+	prNumber int
+	content  string
+}
+
+// TargetView addresses the fetched diff to the pull-request screen.
+func (prDiffMsg) TargetView() screen.ViewID { return screen.ViewPR }
+
+// prDiffErrMsg reports a failed diff fetch for a specific PR; it renders inside the
+// Files Changed tab rather than as a global error.
+type prDiffErrMsg struct {
+	prNumber int
+	err      error
+}
+
+// TargetView addresses the diff error to the pull-request screen.
+func (prDiffErrMsg) TargetView() screen.ViewID { return screen.ViewPR }
+
+// fetchDiffCmd fetches the given PR's unified diff and highlights it off the UI
+// thread. PRDiff runs a `gh` subprocess (not REST), so there is no ErrClientInit
+// path; any failure renders inside the Files Changed tab (prDiffErrMsg).
+func (m Model) fetchDiffCmd(prNumber int) tea.Cmd {
+	owner, name := m.ctx.Owner, m.ctx.Name
+	return func() tea.Msg {
+		// context.Background() for now; a program-scoped context is future work.
+		raw, err := m.backend.PRDiff(context.Background(), owner, name, prNumber, false)
+		if err != nil {
+			return prDiffErrMsg{prNumber: prNumber, err: err}
+		}
+		return prDiffMsg{prNumber: prNumber, content: diff.Highlight(raw)}
+	}
+}
+
 // maybeFetchComments returns a command to load the selected PR's comments when
 // the Comments tab is active and that PR's comments are not already loaded or in
 // flight (an errored PR is retried). It marks the per-PR state loading so the view
@@ -372,6 +429,40 @@ func (m *Model) maybeFetchComments() tea.Cmd {
 	}
 	m.comments[pr.Number] = commentState{status: commentsLoading}
 	return m.fetchCommentsCmd(pr.Number)
+}
+
+// maybeFetchDiff returns a command to load the selected PR's diff when the Files
+// Changed tab is active and that PR's diff is not already loaded or in flight (an
+// errored PR is retried). It marks the per-PR state loading so the view shows the
+// placeholder and no duplicate fetch is issued. Returns nil when no fetch is needed.
+func (m *Model) maybeFetchDiff() tea.Cmd {
+	if m.activeTab != tabs.FilesChanged {
+		return nil
+	}
+	pr, ok := m.selectedPR()
+	if !ok {
+		return nil
+	}
+	switch m.diffs[pr.Number].status {
+	case diffLoading, diffLoaded:
+		return nil
+	}
+	m.diffs[pr.Number] = diffState{status: diffLoading}
+	return m.fetchDiffCmd(pr.Number)
+}
+
+// maybeFetchActiveTab returns the lazy-load command for the active tab's content
+// (comments or diff), or nil for tabs that need no fetch. It is the single entry
+// point callers use after a change that can alter the selected PR or active tab.
+func (m *Model) maybeFetchActiveTab() tea.Cmd {
+	switch m.activeTab {
+	case tabs.Comments:
+		return m.maybeFetchComments()
+	case tabs.FilesChanged:
+		return m.maybeFetchDiff()
+	default:
+		return nil
+	}
 }
 
 func (m Model) checkoutCmd(owner, name string, prNumber int) tea.Cmd {
@@ -474,7 +565,7 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 			if m.focus == focusList {
 				if m.cursor > 0 {
 					m.cursor--
-					cmds = append(cmds, m.maybeFetchComments())
+					cmds = append(cmds, m.maybeFetchActiveTab())
 					m.updateViewportContent()
 					m.viewport.GotoTop()
 				}
@@ -485,7 +576,7 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 			if m.focus == focusList {
 				if m.cursor < len(m.filtered)-1 {
 					m.cursor++
-					cmds = append(cmds, m.maybeFetchComments())
+					cmds = append(cmds, m.maybeFetchActiveTab())
 					m.updateViewportContent()
 					m.viewport.GotoTop()
 				}
@@ -518,12 +609,12 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 			}
 		case key.Matches(msg, keys.Map.NextTab):
 			m.activeTab = m.activeTab.Next()
-			cmds = append(cmds, m.maybeFetchComments())
+			cmds = append(cmds, m.maybeFetchActiveTab())
 			m.updateViewportContent()
 			m.viewport.GotoTop()
 		case key.Matches(msg, keys.Map.PrevTab):
 			m.activeTab = m.activeTab.Prev()
-			cmds = append(cmds, m.maybeFetchComments())
+			cmds = append(cmds, m.maybeFetchActiveTab())
 			m.updateViewportContent()
 			m.viewport.GotoTop()
 		}
@@ -534,7 +625,7 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		m.refreshing = false
 		m.fetchErr = nil
 		m.recompute() // re-apply the active query to the new data and clamp the cursor
-		if cmd := m.maybeFetchComments(); cmd != nil {
+		if cmd := m.maybeFetchActiveTab(); cmd != nil {
 			m.updateViewportContent() // reflect the loading placeholder
 			cmds = append(cmds, cmd)
 		}
@@ -562,6 +653,18 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 
 	case prCommentsErrMsg:
 		m.comments[msg.prNumber] = commentState{status: commentsErrored, err: msg.err}
+		if pr, ok := m.selectedPR(); ok && pr.Number == msg.prNumber {
+			m.updateViewportContent()
+		}
+
+	case prDiffMsg:
+		m.diffs[msg.prNumber] = diffState{status: diffLoaded, content: msg.content}
+		if pr, ok := m.selectedPR(); ok && pr.Number == msg.prNumber {
+			m.updateViewportContent()
+		}
+
+	case prDiffErrMsg:
+		m.diffs[msg.prNumber] = diffState{status: diffErrored, err: msg.err}
 		if pr, ok := m.selectedPR(); ok && pr.Number == msg.prNumber {
 			m.updateViewportContent()
 		}
@@ -626,7 +729,7 @@ func (m *Model) updateViewportContent() {
 	var body string
 	switch m.activeTab {
 	case tabs.FilesChanged:
-		body = filesChangedPlaceholder
+		body = m.renderDiff(activePR.Number)
 	case tabs.Comments:
 		body = m.renderComments(activePR.Number)
 	default: // tabs.Description
@@ -644,11 +747,6 @@ func descriptionContent(pr ghClient.PullRequest) string {
 	}
 	return fmt.Sprintf("%s\nState: %s\n\n%s", styles.Title.Render(pr.Title), pr.State, body)
 }
-
-// filesChangedPlaceholder is shown on the Files Changed tab until the diff-viewer
-// work item fills it in.
-const filesChangedPlaceholder = "Files changed\n\n" +
-	"The diff viewer for this tab is coming in a separate work item."
 
 // renderComments renders the Comments tab for the given PR from its cached load
 // state: a loading placeholder, an in-tab error, an empty state, or the thread in
@@ -675,6 +773,24 @@ func (m Model) renderComments(prNumber int) string {
 		return b.String()
 	default: // commentsNotLoaded, commentsLoading
 		return "Loading comments…"
+	}
+}
+
+// renderDiff renders the Files Changed tab for the given PR from its cached load
+// state: a loading placeholder, an in-tab error, an empty state, or the
+// pre-highlighted diff.
+func (m Model) renderDiff(prNumber int) string {
+	st := m.diffs[prNumber]
+	switch st.status {
+	case diffErrored:
+		return styles.Error.Render(fmt.Sprintf("Failed to load diff: %v", st.err))
+	case diffLoaded:
+		if st.content == "" {
+			return "No changes in this pull request."
+		}
+		return st.content
+	default: // diffNotLoaded, diffLoading
+		return "Loading diff…"
 	}
 }
 
