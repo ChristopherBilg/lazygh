@@ -601,3 +601,23 @@ func TestTemplateIncludesActionKeysAndMergeMethod(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadAppliesMergeMethodAndActionKeys(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	writeConfig(t, dir, "github:\n  merge_method: squash\nkeys:\n  approve: A\n  merge: [g, G]\n")
+
+	got := Load()
+	if got.GitHub.MergeMethod != "squash" {
+		t.Errorf("MergeMethod = %q, want squash", got.GitHub.MergeMethod)
+	}
+	if !slices.Equal(got.Keys.Approve, []string{"A"}) {
+		t.Errorf("Approve = %v, want [A] (scalar)", got.Keys.Approve)
+	}
+	if !slices.Equal(got.Keys.Merge, []string{"g", "G"}) {
+		t.Errorf("Merge = %v, want [g G] (list)", got.Keys.Merge)
+	}
+	if !slices.Equal(got.Keys.Close, Default().Keys.Close) {
+		t.Errorf("Close = %v, want default (untouched)", got.Keys.Close)
+	}
+}

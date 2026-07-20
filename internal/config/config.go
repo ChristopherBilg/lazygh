@@ -27,7 +27,8 @@ type Config struct {
 	Theme  ThemeConfig
 }
 
-// GitHubConfig holds limits for outbound GitHub calls.
+// GitHubConfig holds settings for outbound GitHub calls: timeouts, page size,
+// and the merge method used by the PR merge action.
 type GitHubConfig struct {
 	RESTTimeout       time.Duration
 	SubprocessTimeout time.Duration
@@ -46,6 +47,9 @@ type KeysConfig struct {
 	TogglePane       []string
 	Checkout         []string
 	Open             []string
+	Approve          []string
+	Merge            []string
+	Close            []string
 	Search           []string
 	NavPRs           []string
 	NavIssues        []string
@@ -55,9 +59,6 @@ type KeysConfig struct {
 	FilterDependabot []string
 	PrevTab          []string
 	NextTab          []string
-	Approve          []string
-	Merge            []string
-	Close            []string
 }
 
 // ThemeConfig holds the resolved, validated color per semantic role.
@@ -89,6 +90,9 @@ func Default() Config {
 			TogglePane:       []string{"tab", "shift+tab"},
 			Checkout:         []string{"c"},
 			Open:             []string{"o"},
+			Approve:          []string{"a"},
+			Merge:            []string{"M"},
+			Close:            []string{"D"},
 			Search:           []string{"/"},
 			NavPRs:           []string{"1"},
 			NavIssues:        []string{"2"},
@@ -98,9 +102,6 @@ func Default() Config {
 			FilterDependabot: []string{"d"},
 			PrevTab:          []string{"["},
 			NextTab:          []string{"]"},
-			Approve:          []string{"a"},
-			Merge:            []string{"M"},
-			Close:            []string{"D"},
 		},
 		Theme: ThemeConfig{
 			Accent:   "62",
@@ -150,6 +151,9 @@ type rawKeys struct {
 	TogglePane       *keyList `yaml:"toggle_pane"`
 	Checkout         *keyList `yaml:"checkout"`
 	Open             *keyList `yaml:"open"`
+	Approve          *keyList `yaml:"approve"`
+	Merge            *keyList `yaml:"merge"`
+	Close            *keyList `yaml:"close"`
 	Search           *keyList `yaml:"search"`
 	NavPRs           *keyList `yaml:"nav_prs"`
 	NavIssues        *keyList `yaml:"nav_issues"`
@@ -159,9 +163,6 @@ type rawKeys struct {
 	FilterDependabot *keyList `yaml:"filter_dependabot"`
 	PrevTab          *keyList `yaml:"prev_tab"`
 	NextTab          *keyList `yaml:"next_tab"`
-	Approve          *keyList `yaml:"approve"`
-	Merge            *keyList `yaml:"merge"`
-	Close            *keyList `yaml:"close"`
 }
 
 type rawTheme struct {
@@ -364,6 +365,9 @@ func applyKeys(cfg *Config, rk *rawKeys) {
 		{"toggle_pane", rk.TogglePane, &cfg.Keys.TogglePane},
 		{"checkout", rk.Checkout, &cfg.Keys.Checkout},
 		{"open", rk.Open, &cfg.Keys.Open},
+		{"approve", rk.Approve, &cfg.Keys.Approve},
+		{"merge", rk.Merge, &cfg.Keys.Merge},
+		{"close", rk.Close, &cfg.Keys.Close},
 		{"search", rk.Search, &cfg.Keys.Search},
 		{"nav_prs", rk.NavPRs, &cfg.Keys.NavPRs},
 		{"nav_issues", rk.NavIssues, &cfg.Keys.NavIssues},
@@ -373,9 +377,6 @@ func applyKeys(cfg *Config, rk *rawKeys) {
 		{"filter_dependabot", rk.FilterDependabot, &cfg.Keys.FilterDependabot},
 		{"prev_tab", rk.PrevTab, &cfg.Keys.PrevTab},
 		{"next_tab", rk.NextTab, &cfg.Keys.NextTab},
-		{"approve", rk.Approve, &cfg.Keys.Approve},
-		{"merge", rk.Merge, &cfg.Keys.Merge},
-		{"close", rk.Close, &cfg.Keys.Close},
 	} {
 		if b.raw == nil {
 			continue
