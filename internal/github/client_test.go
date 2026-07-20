@@ -563,3 +563,110 @@ func TestPRSubcommandEmptyStderrReturnsRawError(t *testing.T) {
 		t.Fatalf("err = %q, want the raw error with no stderr suffix when stderr is empty", err.Error())
 	}
 }
+
+func TestFetchPRDiffAppliesDeadlineAndArgs(t *testing.T) {
+	t.Parallel()
+	var deadline time.Time
+	var hasDeadline bool
+	var gotArgs []string
+	c := &Client{
+		subprocessTimeout: 30 * time.Second,
+		exec: func(ctx context.Context, args ...string) (stdout, stderr bytes.Buffer, err error) {
+			deadline, hasDeadline = ctx.Deadline()
+			gotArgs = args
+			stdout.WriteString("diff --git a/x b/x\n")
+			return stdout, stderr, nil
+		},
+	}
+	got, err := c.FetchPRDiff(t.Context(), "octocat", "hello", 9)
+	if err != nil {
+		t.Fatalf("FetchPRDiff returned error: %v", err)
+	}
+	if !hasDeadline {
+		t.Fatal("expected FetchPRDiff to pass a context with a deadline")
+	}
+	wantWindow := 30 * time.Second
+	if d := time.Until(deadline); d < wantWindow-2*time.Second || d > wantWindow+time.Second {
+		t.Fatalf("deadline in %v, want ~%v", d, wantWindow)
+	}
+	if wantArgs := []string{"pr", "diff", "9", "--repo", "octocat/hello"}; !slices.Equal(gotArgs, wantArgs) {
+		t.Fatalf("args = %v, want %v", gotArgs, wantArgs)
+	}
+	if !strings.Contains(got, "diff --git") {
+		t.Fatalf("diff = %q, want it to contain the stdout", got)
+	}
+}
+
+func TestFetchPRDiffLogsFailureWithStderr(t *testing.T) {
+	// No t.Parallel: slog.SetDefault mutates the process-wide default logger.
+	origLogger := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(origLogger) })
+	var buf bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	c := &Client{
+		subprocessTimeout: 30 * time.Second,
+		exec: func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
+			stderr.WriteString("no pull requests found")
+			return stdout, stderr, errors.New("exit status 1")
+		},
+	}
+	_, err := c.FetchPRDiff(t.Context(), "octocat", "hello", 9)
+	if err == nil {
+		t.Fatal("expected FetchPRDiff to return the exec error")
+	}
+	if !strings.Contains(err.Error(), "no pull requests found") {
+		t.Fatalf("returned error should fold in the stderr detail; got: %v", err)
+	}
+	if out := buf.String(); !strings.Contains(out, "level=WARN") || !strings.Contains(out, "fetch pr diff failed") || !strings.Contains(out, "no pull requests found") {
+		t.Fatalf("failure log missing stderr; got: %s", out)
+	}
+}
+
+func TestFetchPRDiffLogsSuccess(t *testing.T) {
+	// No t.Parallel: slog.SetDefault mutates the process-wide default logger.
+	origLogger := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(origLogger) })
+	var buf bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	c := &Client{
+		subprocessTimeout: 30 * time.Second,
+		exec: func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
+			stdout.WriteString("diff --git a/x b/x\n")
+			return stdout, stderr, nil
+		},
+	}
+	if _, err := c.FetchPRDiff(t.Context(), "octocat", "hello", 9); err != nil {
+		t.Fatalf("FetchPRDiff: %v", err)
+	}
+	if out := buf.String(); !strings.Contains(out, "level=INFO") || !strings.Contains(out, "fetched pr diff") || !strings.Contains(out, "pr=9") {
+		t.Fatalf("success log missing; got: %s", out)
+	}
+}
+
+func TestPRDiffMemoizes(t *testing.T) {
+	t.Parallel()
+	calls := 0
+	c := &Client{
+		cache:             NewCache(),
+		subprocessTimeout: 30 * time.Second,
+		exec: func(_ context.Context, _ ...string) (stdout, stderr bytes.Buffer, err error) {
+			calls++
+			stdout.WriteString("diff --git a/x b/x\n")
+			return stdout, stderr, nil
+		},
+	}
+	for range 3 {
+		if _, err := c.PRDiff(t.Context(), "octocat", "hello", 9, false); err != nil {
+			t.Fatalf("PRDiff: %v", err)
+		}
+	}
+	if calls != 1 {
+		t.Errorf("exec called %d times, want 1 (memoized)", calls)
+	}
+	if _, err := c.PRDiff(t.Context(), "octocat", "hello", 9, true); err != nil {
+		t.Fatalf("PRDiff force: %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("exec called %d times after force, want 2 (force bypasses cache)", calls)
+	}
+}

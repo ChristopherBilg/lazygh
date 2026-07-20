@@ -98,3 +98,12 @@ func (c *Client) PRComments(ctx context.Context, owner, name string, prNumber in
 		return c.FetchPRComments(ctx, owner, name, prNumber)
 	})
 }
+
+// PRDiff returns the given PR's unified diff, served from the cache when present.
+// force bypasses the cache and refreshes the stored entry.
+func (c *Client) PRDiff(ctx context.Context, owner, name string, prNumber int, force bool) (string, error) {
+	key := fmt.Sprintf("pr-diff:%s/%s#%d", owner, name, prNumber)
+	return getOrLoad(c.cache, key, force, func() (string, error) {
+		return c.FetchPRDiff(ctx, owner, name, prNumber)
+	})
+}
