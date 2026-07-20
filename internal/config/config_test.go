@@ -531,3 +531,73 @@ func TestApplyKeysFilterBindings(t *testing.T) {
 		t.Errorf("FilterDependabot = %v, want [c]", cfg.Keys.FilterDependabot)
 	}
 }
+
+func TestDefaultMergeMethod(t *testing.T) {
+	if got := Default().GitHub.MergeMethod; got != "merge" {
+		t.Fatalf("default merge_method = %q, want merge", got)
+	}
+}
+
+func TestApplyMergeMethod(t *testing.T) {
+	def := Default()
+	tests := []struct {
+		name     string
+		in       string
+		want     string
+		wantWarn bool
+	}{
+		{"squash", "squash", "squash", false},
+		{"rebase", "rebase", "rebase", false},
+		{"merge", "merge", "merge", false},
+		{"invalid -> default + warn", "fast-forward", def.GitHub.MergeMethod, true},
+		{"empty -> default + warn", "", def.GitHub.MergeMethod, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			buf := captureLogs(t)
+			cfg := Default()
+			applyRaw(&cfg, raw{GitHub: &rawGitHub{MergeMethod: strPtr(tt.in)}})
+			if cfg.GitHub.MergeMethod != tt.want {
+				t.Errorf("MergeMethod = %q, want %q", cfg.GitHub.MergeMethod, tt.want)
+			}
+			if gotWarn := strings.Contains(buf.String(), "level=WARN"); gotWarn != tt.wantWarn {
+				t.Errorf("warn = %v, want %v; log: %s", gotWarn, tt.wantWarn, buf.String())
+			}
+		})
+	}
+}
+
+func TestDefaultActionKeys(t *testing.T) {
+	def := Default()
+	if !slices.Equal(def.Keys.Approve, []string{"a"}) {
+		t.Errorf("Approve default = %v, want [a]", def.Keys.Approve)
+	}
+	if !slices.Equal(def.Keys.Merge, []string{"M"}) {
+		t.Errorf("Merge default = %v, want [M]", def.Keys.Merge)
+	}
+	if !slices.Equal(def.Keys.Close, []string{"D"}) {
+		t.Errorf("Close default = %v, want [D]", def.Keys.Close)
+	}
+}
+
+func TestApplyActionKeyOverrides(t *testing.T) {
+	cfg := Default()
+	applyRaw(&cfg, raw{Keys: &rawKeys{Approve: keyListPtr("A"), Merge: keyListPtr("g"), Close: keyListPtr("x")}})
+	if !slices.Equal(cfg.Keys.Approve, []string{"A"}) {
+		t.Errorf("Approve = %v, want [A]", cfg.Keys.Approve)
+	}
+	if !slices.Equal(cfg.Keys.Merge, []string{"g"}) {
+		t.Errorf("Merge = %v, want [g]", cfg.Keys.Merge)
+	}
+	if !slices.Equal(cfg.Keys.Close, []string{"x"}) {
+		t.Errorf("Close = %v, want [x]", cfg.Keys.Close)
+	}
+}
+
+func TestTemplateIncludesActionKeysAndMergeMethod(t *testing.T) {
+	for _, want := range []string{"# merge_method: merge", "# approve: [a]", "# merge: [M]", "# close: [D]"} {
+		if !strings.Contains(defaultConfigTemplate, want) {
+			t.Fatalf("template missing %q:\n%s", want, defaultConfigTemplate)
+		}
+	}
+}

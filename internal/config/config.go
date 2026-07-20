@@ -32,6 +32,7 @@ type GitHubConfig struct {
 	RESTTimeout       time.Duration
 	SubprocessTimeout time.Duration
 	RepoPageSize      int
+	MergeMethod       string
 }
 
 // KeysConfig holds the resolved key bindings: one non-empty []string per action.
@@ -54,6 +55,9 @@ type KeysConfig struct {
 	FilterDependabot []string
 	PrevTab          []string
 	NextTab          []string
+	Approve          []string
+	Merge            []string
+	Close            []string
 }
 
 // ThemeConfig holds the resolved, validated color per semantic role.
@@ -73,6 +77,7 @@ func Default() Config {
 			RESTTimeout:       10 * time.Second,
 			SubprocessTimeout: 30 * time.Second,
 			RepoPageSize:      50,
+			MergeMethod:       "merge",
 		},
 		Keys: KeysConfig{
 			Quit:             []string{"q"},
@@ -93,6 +98,9 @@ func Default() Config {
 			FilterDependabot: []string{"d"},
 			PrevTab:          []string{"["},
 			NextTab:          []string{"]"},
+			Approve:          []string{"a"},
+			Merge:            []string{"M"},
+			Close:            []string{"D"},
 		},
 		Theme: ThemeConfig{
 			Accent:   "62",
@@ -111,6 +119,7 @@ type rawGitHub struct {
 	RESTTimeout       *string `yaml:"rest_timeout"`
 	SubprocessTimeout *string `yaml:"subprocess_timeout"`
 	RepoPageSize      *int    `yaml:"repo_page_size"`
+	MergeMethod       *string `yaml:"merge_method"`
 }
 
 // keyList is a []string that also accepts a single YAML scalar, so both
@@ -150,6 +159,9 @@ type rawKeys struct {
 	FilterDependabot *keyList `yaml:"filter_dependabot"`
 	PrevTab          *keyList `yaml:"prev_tab"`
 	NextTab          *keyList `yaml:"next_tab"`
+	Approve          *keyList `yaml:"approve"`
+	Merge            *keyList `yaml:"merge"`
+	Close            *keyList `yaml:"close"`
 }
 
 type rawTheme struct {
@@ -237,6 +249,7 @@ github:
   # rest_timeout: 10s        # timeout for each GitHub REST API request
   # subprocess_timeout: 30s  # timeout for each gh subprocess call
   # repo_page_size: 50       # repositories fetched for the picker (1-100)
+  # merge_method: merge      # how 'M' merges a PR: merge, squash, or rebase
 keys:
   # quit: [q]                # ctrl+c always quits too
   # back: [esc, backspace]
@@ -247,6 +260,9 @@ keys:
   # toggle_pane: [tab, shift+tab]
   # checkout: [c]
   # open: [o]
+  # approve: [a]                # submit an approving review on the selected PR
+  # merge: [M]                  # merge the selected PR (asks to confirm)
+  # close: [D]                  # close the selected PR (asks to confirm)
   # search: [/]
   # nav_prs: ["1"]
   # nav_issues: ["2"]
@@ -320,6 +336,14 @@ func applyGitHub(cfg *Config, g *rawGitHub) {
 				"value", *g.RepoPageSize, "default", cfg.GitHub.RepoPageSize)
 		}
 	}
+	if g.MergeMethod != nil {
+		if isValidMergeMethod(*g.MergeMethod) {
+			cfg.GitHub.MergeMethod = *g.MergeMethod
+		} else {
+			slog.Warn("config: invalid github.merge_method; using default",
+				"value", *g.MergeMethod, "default", cfg.GitHub.MergeMethod)
+		}
+	}
 }
 
 func applyKeys(cfg *Config, rk *rawKeys) {
@@ -349,6 +373,9 @@ func applyKeys(cfg *Config, rk *rawKeys) {
 		{"filter_dependabot", rk.FilterDependabot, &cfg.Keys.FilterDependabot},
 		{"prev_tab", rk.PrevTab, &cfg.Keys.PrevTab},
 		{"next_tab", rk.NextTab, &cfg.Keys.NextTab},
+		{"approve", rk.Approve, &cfg.Keys.Approve},
+		{"merge", rk.Merge, &cfg.Keys.Merge},
+		{"close", rk.Close, &cfg.Keys.Close},
 	} {
 		if b.raw == nil {
 			continue
@@ -397,6 +424,16 @@ func sanitizeKeys(in []string) (out []string, ok bool) {
 		}
 	}
 	return out, len(out) > 0
+}
+
+// isValidMergeMethod reports whether m is one of gh's supported merge methods.
+func isValidMergeMethod(m string) bool {
+	switch m {
+	case "merge", "squash", "rebase":
+		return true
+	default:
+		return false
+	}
 }
 
 // hexColor matches #RGB and #RRGGBB.
