@@ -294,7 +294,13 @@ func (c *Client) FetchPRDiff(ctx context.Context, owner, name string, prNumber i
 	repo := fmt.Sprintf("%s/%s", owner, name)
 	stdout, stderr, err := c.exec(ctx, "pr", "diff", strconv.Itoa(prNumber), "--repo", repo)
 	if err != nil {
-		slog.Warn("fetch pr diff failed", "repo", repo, "pr", prNumber, "err", err, "stderr", strings.TrimSpace(stderr.String()))
+		detail := strings.TrimSpace(stderr.String())
+		slog.Warn("fetch pr diff failed", "repo", repo, "pr", prNumber, "err", err, "stderr", detail)
+		if detail != "" {
+			// Fold gh's stderr into the error so the in-tab failure state shows the
+			// actionable reason, not a bare "exit status 1" (mirrors prSubcommand).
+			return "", fmt.Errorf("%w: %s", err, detail)
+		}
 		return "", err
 	}
 	slog.Info("fetched pr diff", "repo", repo, "pr", prNumber, "bytes", stdout.Len())

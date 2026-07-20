@@ -610,8 +610,12 @@ func TestFetchPRDiffLogsFailureWithStderr(t *testing.T) {
 			return stdout, stderr, errors.New("exit status 1")
 		},
 	}
-	if _, err := c.FetchPRDiff(t.Context(), "octocat", "hello", 9); err == nil {
+	_, err := c.FetchPRDiff(t.Context(), "octocat", "hello", 9)
+	if err == nil {
 		t.Fatal("expected FetchPRDiff to return the exec error")
+	}
+	if !strings.Contains(err.Error(), "no pull requests found") {
+		t.Fatalf("returned error should fold in the stderr detail; got: %v", err)
 	}
 	if out := buf.String(); !strings.Contains(out, "level=WARN") || !strings.Contains(out, "fetch pr diff failed") || !strings.Contains(out, "no pull requests found") {
 		t.Fatalf("failure log missing stderr; got: %s", out)
