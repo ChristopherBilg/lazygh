@@ -256,14 +256,16 @@ func (m *Model) beginForcedRefresh() []tea.Cmd {
 }
 
 // setFilter applies quick filter f, toggling back to filterAll when f is already
-// active. It resets the cursor to the top and recomputes. It is a no-op while the
-// list is unavailable (loading, or a fatal error with no PRs to show).
-func (m *Model) setFilter(f prFilter) {
+// active. It resets the cursor to the top, recomputes, and returns a command to
+// load the active tab's content (diff/comments) for the new selection — nil when
+// none is needed. It is a no-op while the list is unavailable (loading, or a fatal
+// error with no PRs to show).
+func (m *Model) setFilter(f prFilter) tea.Cmd {
 	// Filters are a list-pane action (like search): ignore them when the detail
 	// pane is focused, where the same keys drive viewport scrolling (e.g. "d" =
 	// half-page-down). Also a no-op while the list is unavailable.
 	if m.focus != focusList || m.loading || (m.fetchErr != nil && len(m.ctx.PRs) == 0) {
-		return
+		return nil
 	}
 	if m.filter == f {
 		f = filterAll // pressing the active filter's key again clears it
@@ -271,6 +273,9 @@ func (m *Model) setFilter(f prFilter) {
 	m.filter = f
 	m.cursor = 0
 	m.recompute()
+	// A filter-driven selection change can surface an uncached PR; load the active
+	// tab's content for it so it doesn't sit on "Loading…" until the next keypress.
+	return m.maybeFetchActiveTab()
 }
 
 // selectedPR returns the PR under the cursor within the filtered set, or false
@@ -648,11 +653,11 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 				cmds = append(cmds, m.input.Focus())
 			}
 		case key.Matches(msg, keys.Map.FilterMine):
-			m.setFilter(filterMine)
+			cmds = append(cmds, m.setFilter(filterMine))
 		case key.Matches(msg, keys.Map.FilterReview):
-			m.setFilter(filterNeedsReview)
+			cmds = append(cmds, m.setFilter(filterNeedsReview))
 		case key.Matches(msg, keys.Map.FilterDependabot):
-			m.setFilter(filterDependabot)
+			cmds = append(cmds, m.setFilter(filterDependabot))
 		case key.Matches(msg, keys.Map.TogglePane):
 			if m.focus == focusList {
 				m.focus = focusDetails

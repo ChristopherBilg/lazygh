@@ -1935,3 +1935,26 @@ func TestCommentsTabStillTriggersFetchAfterRefactor(t *testing.T) {
 		t.Fatalf("comments[1].status = %d, want loading", um.comments[1].status)
 	}
 }
+
+func TestFilterOnFilesChangedTabTriggersDiffFetch(t *testing.T) {
+	t.Parallel()
+	m := withWideFilteredPRs("octocat",
+		ghClient.PullRequest{Number: 1, Title: "a", User: ghClient.User{Login: "hubot"}},
+		ghClient.PullRequest{Number: 2, Title: "b", User: ghClient.User{Login: "octocat"}},
+	)
+	m.activeTab = tabs.FilesChanged
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}}) // My PRs -> selects #2 (uncached)
+	um := updated.(Model)
+	if um.filter != filterMine {
+		t.Fatalf("filter = %v, want filterMine", um.filter)
+	}
+	if pr, ok := um.selectedPR(); !ok || pr.Number != 2 {
+		t.Fatalf("selected = %+v, want PR #2", pr)
+	}
+	if cmd == nil {
+		t.Fatal("expected a diff fetch command after a filter selected an uncached PR on the Files Changed tab")
+	}
+	if um.diffs[2].status != diffLoading {
+		t.Fatalf("diffs[2].status = %d, want diffLoading", um.diffs[2].status)
+	}
+}
