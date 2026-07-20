@@ -115,3 +115,20 @@ func TestHighlightDeletionUsesOldPathLexer(t *testing.T) {
 		t.Fatalf("expected the deleted Go line to be highlighted via the old-path lexer:\n%q", out)
 	}
 }
+
+func TestHighlightStripsTerminalEscapes(t *testing.T) {
+	t.Parallel()
+	// Hostile diff content: an OSC 52 clipboard-write sequence (ESC ] 52 ; ... BEL)
+	// plus a stray ESC, embedded in an added line.
+	raw := "diff --git a/x b/x\n@@ -0,0 +1 @@\n+code\x1b]52;c;ZXZpbA==\x07more\x1b[31m\n"
+	out := Highlight(raw)
+	if strings.Contains(out, "\x1b]") {
+		t.Fatalf("output must not contain an OSC introducer from input: %q", out)
+	}
+	if strings.ContainsRune(out, '\x07') {
+		t.Fatalf("output must not contain a BEL from input: %q", out)
+	}
+	if s := ansi.Strip(out); !strings.Contains(s, "code") || !strings.Contains(s, "more") {
+		t.Fatalf("visible text should survive sanitization: %q", s)
+	}
+}

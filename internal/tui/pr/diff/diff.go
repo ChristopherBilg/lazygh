@@ -131,9 +131,27 @@ func highlightCode(code string, lexer chroma.Lexer) (result string) {
 	return strings.TrimRight(b.String(), "\n")
 }
 
+// sanitize strips C0 control bytes (and DEL) from untrusted diff content, keeping
+// only newline and tab. A PR's file bytes are attacker-controlled and are written
+// to the terminal; removing the ESC initiator neutralizes injected CSI/OSC escape
+// sequences (e.g. OSC 52 clipboard writes), and other lone control bytes are
+// dropped too. chroma re-adds its own legitimate color escapes afterward.
+func sanitize(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' {
+			return r
+		}
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
+}
+
 // Highlight renders a unified diff into a syntax-highlighted, gutter-marked string
 // for the detail viewport. It returns "" for a blank diff.
 func Highlight(rawDiff string) string {
+	rawDiff = sanitize(rawDiff)
 	if strings.TrimSpace(rawDiff) == "" {
 		return ""
 	}
