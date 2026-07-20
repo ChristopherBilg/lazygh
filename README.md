@@ -104,6 +104,9 @@ These are the defaults; every action can be remapped via configuration (see belo
 | `[`, `]` | Switch the detail pane's tab (Description / Files Changed / Comments) |
 | `c` | Check out the selected PR locally |
 | `o` | Open the selected PR in your browser |
+| `a` | Approve the selected PR (submit an approving review) |
+| `M` | Merge the selected PR (asks to confirm) |
+| `D` | Close the selected PR (asks to confirm) |
 | `r` | Refresh the pull-request list |
 
 ## Configuration

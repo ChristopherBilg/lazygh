@@ -25,6 +25,7 @@ type ClientConfig struct {
 	RESTTimeout       time.Duration
 	SubprocessTimeout time.Duration
 	RepoPageSize      int
+	MergeMethod       string
 }
 
 // Client performs GitHub REST and `gh` subprocess calls, backed by an in-memory
@@ -33,6 +34,7 @@ type Client struct {
 	restTimeout       time.Duration
 	subprocessTimeout time.Duration
 	pageSize          int
+	mergeMethod       string
 	cache             *Cache
 	// Seams, defaulted to the real implementations; tests override them.
 	exec        func(ctx context.Context, args ...string) (stdout, stderr bytes.Buffer, err error)
@@ -45,6 +47,7 @@ const (
 	defaultRESTTimeout       = 10 * time.Second
 	defaultSubprocessTimeout = 30 * time.Second
 	defaultRepoPageSize      = 50
+	defaultMergeMethod       = "merge"
 )
 
 // NewClient returns a ready Client, applying defaults for non-positive fields.
@@ -53,6 +56,7 @@ func NewClient(cfg ClientConfig) *Client {
 		restTimeout:       cfg.RESTTimeout,
 		subprocessTimeout: cfg.SubprocessTimeout,
 		pageSize:          cfg.RepoPageSize,
+		mergeMethod:       cfg.MergeMethod,
 		cache:             NewCache(),
 		exec:              gh.ExecContext,
 		currentRepo:       repository.Current,
@@ -65,6 +69,9 @@ func NewClient(cfg ClientConfig) *Client {
 	}
 	if c.pageSize <= 0 {
 		c.pageSize = defaultRepoPageSize
+	}
+	if !isValidMergeMethod(c.mergeMethod) {
+		c.mergeMethod = defaultMergeMethod
 	}
 	c.fetchLogin = c.fetchLoginREST
 	return c
@@ -292,4 +299,63 @@ func (c *Client) FetchPRDiff(ctx context.Context, owner, name string, prNumber i
 	}
 	slog.Info("fetched pr diff", "repo", repo, "pr", prNumber, "bytes", stdout.Len())
 	return stdout.String(), nil
+}
+
+// isValidMergeMethod reports whether m is one of gh's supported merge methods.
+func isValidMergeMethod(m string) bool {
+	switch m {
+	case "merge", "squash", "rebase":
+		return true
+	default:
+		return false
+	}
+}
+
+// prSubcommand runs `gh <args...>` bounded by the subprocess timeout. On failure
+// it folds gh's trimmed stderr (its human-readable reason) into the returned
+// error so callers can surface, e.g., "Pull request is not mergeable".
+func (c *Client) prSubcommand(ctx context.Context, args ...string) error {
+	ctx, cancel := context.WithTimeout(ctx, c.subprocessTimeout)
+	defer cancel()
+	_, stderr, err := c.exec(ctx, args...)
+	if err != nil {
+		if detail := strings.TrimSpace(stderr.String()); detail != "" {
+			return fmt.Errorf("%w: %s", err, detail)
+		}
+		return err
+	}
+	return nil
+}
+
+// ApprovePR submits an approving review on the given PR of owner/name.
+func (c *Client) ApprovePR(ctx context.Context, owner, name string, prNumber int) error {
+	repo := fmt.Sprintf("%s/%s", owner, name)
+	if err := c.prSubcommand(ctx, "pr", "review", strconv.Itoa(prNumber), "--repo", repo, "--approve"); err != nil {
+		slog.Warn("approve pr failed", "repo", repo, "pr", prNumber, "err", err)
+		return err
+	}
+	slog.Info("approved pr", "repo", repo, "pr", prNumber)
+	return nil
+}
+
+// MergePR merges the given PR of owner/name using the configured merge method.
+func (c *Client) MergePR(ctx context.Context, owner, name string, prNumber int) error {
+	repo := fmt.Sprintf("%s/%s", owner, name)
+	if err := c.prSubcommand(ctx, "pr", "merge", strconv.Itoa(prNumber), "--repo", repo, "--"+c.mergeMethod); err != nil {
+		slog.Warn("merge pr failed", "repo", repo, "pr", prNumber, "method", c.mergeMethod, "err", err)
+		return err
+	}
+	slog.Info("merged pr", "repo", repo, "pr", prNumber, "method", c.mergeMethod)
+	return nil
+}
+
+// ClosePR closes the given PR of owner/name without merging.
+func (c *Client) ClosePR(ctx context.Context, owner, name string, prNumber int) error {
+	repo := fmt.Sprintf("%s/%s", owner, name)
+	if err := c.prSubcommand(ctx, "pr", "close", strconv.Itoa(prNumber), "--repo", repo); err != nil {
+		slog.Warn("close pr failed", "repo", repo, "pr", prNumber, "err", err)
+		return err
+	}
+	slog.Info("closed pr", "repo", repo, "pr", prNumber)
+	return nil
 }

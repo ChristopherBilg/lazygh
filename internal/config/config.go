@@ -27,11 +27,13 @@ type Config struct {
 	Theme  ThemeConfig
 }
 
-// GitHubConfig holds limits for outbound GitHub calls.
+// GitHubConfig holds settings for outbound GitHub calls: timeouts, page size,
+// and the merge method used by the PR merge action.
 type GitHubConfig struct {
 	RESTTimeout       time.Duration
 	SubprocessTimeout time.Duration
 	RepoPageSize      int
+	MergeMethod       string
 }
 
 // KeysConfig holds the resolved key bindings: one non-empty []string per action.
@@ -45,6 +47,9 @@ type KeysConfig struct {
 	TogglePane       []string
 	Checkout         []string
 	Open             []string
+	Approve          []string
+	Merge            []string
+	Close            []string
 	Search           []string
 	NavPRs           []string
 	NavIssues        []string
@@ -73,6 +78,7 @@ func Default() Config {
 			RESTTimeout:       10 * time.Second,
 			SubprocessTimeout: 30 * time.Second,
 			RepoPageSize:      50,
+			MergeMethod:       "merge",
 		},
 		Keys: KeysConfig{
 			Quit:             []string{"q"},
@@ -84,6 +90,9 @@ func Default() Config {
 			TogglePane:       []string{"tab", "shift+tab"},
 			Checkout:         []string{"c"},
 			Open:             []string{"o"},
+			Approve:          []string{"a"},
+			Merge:            []string{"M"},
+			Close:            []string{"D"},
 			Search:           []string{"/"},
 			NavPRs:           []string{"1"},
 			NavIssues:        []string{"2"},
@@ -111,6 +120,7 @@ type rawGitHub struct {
 	RESTTimeout       *string `yaml:"rest_timeout"`
 	SubprocessTimeout *string `yaml:"subprocess_timeout"`
 	RepoPageSize      *int    `yaml:"repo_page_size"`
+	MergeMethod       *string `yaml:"merge_method"`
 }
 
 // keyList is a []string that also accepts a single YAML scalar, so both
@@ -141,6 +151,9 @@ type rawKeys struct {
 	TogglePane       *keyList `yaml:"toggle_pane"`
 	Checkout         *keyList `yaml:"checkout"`
 	Open             *keyList `yaml:"open"`
+	Approve          *keyList `yaml:"approve"`
+	Merge            *keyList `yaml:"merge"`
+	Close            *keyList `yaml:"close"`
 	Search           *keyList `yaml:"search"`
 	NavPRs           *keyList `yaml:"nav_prs"`
 	NavIssues        *keyList `yaml:"nav_issues"`
@@ -237,6 +250,7 @@ github:
   # rest_timeout: 10s        # timeout for each GitHub REST API request
   # subprocess_timeout: 30s  # timeout for each gh subprocess call
   # repo_page_size: 50       # repositories fetched for the picker (1-100)
+  # merge_method: merge      # how 'M' merges a PR: merge, squash, or rebase
 keys:
   # quit: [q]                # ctrl+c always quits too
   # back: [esc, backspace]
@@ -247,6 +261,9 @@ keys:
   # toggle_pane: [tab, shift+tab]
   # checkout: [c]
   # open: [o]
+  # approve: [a]                # submit an approving review on the selected PR
+  # merge: [M]                  # merge the selected PR (asks to confirm)
+  # close: [D]                  # close the selected PR (asks to confirm)
   # search: [/]
   # nav_prs: ["1"]
   # nav_issues: ["2"]
@@ -320,6 +337,14 @@ func applyGitHub(cfg *Config, g *rawGitHub) {
 				"value", *g.RepoPageSize, "default", cfg.GitHub.RepoPageSize)
 		}
 	}
+	if g.MergeMethod != nil {
+		if isValidMergeMethod(*g.MergeMethod) {
+			cfg.GitHub.MergeMethod = *g.MergeMethod
+		} else {
+			slog.Warn("config: invalid github.merge_method; using default",
+				"value", *g.MergeMethod, "default", cfg.GitHub.MergeMethod)
+		}
+	}
 }
 
 func applyKeys(cfg *Config, rk *rawKeys) {
@@ -340,6 +365,9 @@ func applyKeys(cfg *Config, rk *rawKeys) {
 		{"toggle_pane", rk.TogglePane, &cfg.Keys.TogglePane},
 		{"checkout", rk.Checkout, &cfg.Keys.Checkout},
 		{"open", rk.Open, &cfg.Keys.Open},
+		{"approve", rk.Approve, &cfg.Keys.Approve},
+		{"merge", rk.Merge, &cfg.Keys.Merge},
+		{"close", rk.Close, &cfg.Keys.Close},
 		{"search", rk.Search, &cfg.Keys.Search},
 		{"nav_prs", rk.NavPRs, &cfg.Keys.NavPRs},
 		{"nav_issues", rk.NavIssues, &cfg.Keys.NavIssues},
@@ -397,6 +425,16 @@ func sanitizeKeys(in []string) (out []string, ok bool) {
 		}
 	}
 	return out, len(out) > 0
+}
+
+// isValidMergeMethod reports whether m is one of gh's supported merge methods.
+func isValidMergeMethod(m string) bool {
+	switch m {
+	case "merge", "squash", "rebase":
+		return true
+	default:
+		return false
+	}
 }
 
 // hexColor matches #RGB and #RRGGBB.
