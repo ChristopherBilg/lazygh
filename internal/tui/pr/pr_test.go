@@ -27,6 +27,9 @@ type fakeBackend struct {
 	prs            []ghClient.PullRequest
 	prsErr         error
 	openErr        error
+	approveErr     error
+	mergeErr       error
+	closeErr       error
 	comments       []ghClient.PRComment
 	commentsErr    error
 	currentUser    string
@@ -40,6 +43,12 @@ func (f fakeBackend) RepoPRs(_ context.Context, owner, name string, _ bool) (ghC
 func (f fakeBackend) CheckoutPR(_ context.Context, _, _ string, _ int) error { return f.checkoutErr }
 
 func (f fakeBackend) OpenPRInBrowser(_ context.Context, _, _ string, _ int) error { return f.openErr }
+
+func (f fakeBackend) ApprovePR(_ context.Context, _, _ string, _ int) error { return f.approveErr }
+
+func (f fakeBackend) MergePR(_ context.Context, _, _ string, _ int) error { return f.mergeErr }
+
+func (f fakeBackend) ClosePR(_ context.Context, _, _ string, _ int) error { return f.closeErr }
 
 func (f fakeBackend) PRComments(_ context.Context, _, _ string, _ int, _ bool) ([]ghClient.PRComment, error) {
 	return f.comments, f.commentsErr
@@ -1526,5 +1535,224 @@ func TestFilterKeysIgnoredWhenDetailFocused(t *testing.T) {
 		if got := updated.(Model).filter; got != filterAll {
 			t.Fatalf("key %q in detail focus changed filter to %v; want filterAll (filters are list-pane only)", r, got)
 		}
+	}
+}
+
+func TestApproveEmitsCommandAndSetsMessage(t *testing.T) {
+	t.Parallel()
+	m := withPRs(2) // cursor 0 -> PR #1
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd == nil {
+		t.Fatal("expected a command from approve")
+	}
+	if got := updated.(Model).message; got != "Approving PR #1..." {
+		t.Fatalf("message = %q, want %q", got, "Approving PR #1...")
+	}
+}
+
+func TestApproveEmptyListNoOp(t *testing.T) {
+	t.Parallel()
+	m := withPRs(0)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if cmd != nil {
+		t.Fatal("expected no command for empty PR list")
+	}
+	if got := updated.(Model).message; got != "" {
+		t.Fatalf("message = %q, want empty", got)
+	}
+}
+
+func TestApproveCmdSuccess(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40)
+	msg := m.approveCmd("octocat", "hello", 7)()
+	res, ok := msg.(actionResultMsg)
+	if !ok {
+		t.Fatalf("expected actionResultMsg, got %T", msg)
+	}
+	if !res.ok || !strings.Contains(res.text, "Approved PR #7") {
+		t.Fatalf("res = %+v, want ok success mentioning PR #7", res)
+	}
+}
+
+func TestApproveCmdFailure(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{approveErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	msg := m.approveCmd("octocat", "hello", 7)()
+	res, ok := msg.(actionResultMsg)
+	if !ok {
+		t.Fatalf("expected actionResultMsg, got %T", msg)
+	}
+	if res.ok || !strings.Contains(res.text, "failed") || !strings.Contains(res.text, "boom") {
+		t.Fatalf("res = %+v, want failure mentioning boom", res)
+	}
+}
+
+func TestActionResultSuccessRefreshes(t *testing.T) {
+	t.Parallel()
+	m := withPRs(2)
+	updated, cmd := m.Update(actionResultMsg{text: "Approved PR #1", ok: true})
+	um := updated.(Model)
+	if um.message != "Approved PR #1" {
+		t.Fatalf("message = %q, want %q", um.message, "Approved PR #1")
+	}
+	if !um.refreshing {
+		t.Fatal("expected a forced refresh (refreshing=true) after a successful action")
+	}
+	if cmd == nil {
+		t.Fatal("expected a refresh command after a successful action")
+	}
+}
+
+func TestActionResultFailureNoRefresh(t *testing.T) {
+	t.Parallel()
+	m := withPRs(2)
+	updated, _ := m.Update(actionResultMsg{text: "Merge PR #1 failed: nope", ok: false})
+	um := updated.(Model)
+	if um.message != "Merge PR #1 failed: nope" {
+		t.Fatalf("message = %q, want the failure text", um.message)
+	}
+	if um.refreshing {
+		t.Fatal("a failed action must not trigger a refresh")
+	}
+}
+
+func TestActionResultMsgTargetView(t *testing.T) {
+	t.Parallel()
+	if (actionResultMsg{}).TargetView() != screen.ViewPR {
+		t.Fatal("actionResultMsg must target the PR view")
+	}
+}
+
+func TestFooterShowsActionHints(t *testing.T) {
+	t.Parallel()
+	if v := withPRs(1).View(); !strings.Contains(v, "[a/M/D] Approve/Merge/Close") {
+		t.Fatalf("footer missing action hints:\n%s", v)
+	}
+}
+
+// pressKey sends one key press and returns the updated model.
+func pressKey(m Model, r rune) Model { return typeRunes(m, string(r)) }
+
+func TestMergeEntersConfirm(t *testing.T) {
+	t.Parallel()
+	m := withPRs(2) // cursor 0 -> PR #1
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	um := updated.(Model)
+	if um.confirm != confirmMerge || um.confirmPR != 1 {
+		t.Fatalf("confirm=%v confirmPR=%d, want confirmMerge/1", um.confirm, um.confirmPR)
+	}
+	if cmd != nil {
+		t.Fatal("merge must not run before confirmation")
+	}
+	if !um.CapturingInput() {
+		t.Fatal("expected CapturingInput()=true while confirming")
+	}
+}
+
+func TestCloseEntersConfirm(t *testing.T) {
+	t.Parallel()
+	um := pressKey(withPRs(2), 'D')
+	if um.confirm != confirmClose || um.confirmPR != 1 {
+		t.Fatalf("confirm=%v confirmPR=%d, want confirmClose/1", um.confirm, um.confirmPR)
+	}
+}
+
+func TestMergeEmptyListNoOp(t *testing.T) {
+	t.Parallel()
+	if um := pressKey(withPRs(0), 'M'); um.confirm != confirmNone {
+		t.Fatalf("confirm=%v, want confirmNone on empty list", um.confirm)
+	}
+}
+
+func TestConfirmYExecutesMerge(t *testing.T) {
+	t.Parallel()
+	m := pressKey(withPRs(2), 'M')
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	um := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected a merge command after confirming with y")
+	}
+	if um.confirm != confirmNone {
+		t.Fatal("confirm prompt should clear after y")
+	}
+	if um.message != "Merging PR #1..." {
+		t.Fatalf("message = %q, want %q", um.message, "Merging PR #1...")
+	}
+}
+
+func TestConfirmCancelKeys(t *testing.T) {
+	t.Parallel()
+	for _, k := range []tea.KeyMsg{
+		{Type: tea.KeyRunes, Runes: []rune{'n'}},
+		{Type: tea.KeyEsc},
+		{Type: tea.KeyRunes, Runes: []rune{'1'}},
+	} {
+		m := pressKey(withPRs(2), 'M')
+		updated, _ := m.Update(k)
+		um := updated.(Model)
+		if um.confirm != confirmNone {
+			t.Fatalf("key %v: confirm not cleared", k)
+		}
+		if um.message != "" {
+			t.Fatalf("key %v: message = %q, want empty (canceled)", k, um.message)
+		}
+	}
+}
+
+func TestMergeCmdSuccessAndFailure(t *testing.T) {
+	t.Parallel()
+	ok := New(fakeBackend{}, "octocat", "hello", 100, 40).mergeCmd("octocat", "hello", 7)()
+	if r, _ := ok.(actionResultMsg); !r.ok || !strings.Contains(r.text, "Merged PR #7") {
+		t.Fatalf("success = %+v, want ok mentioning PR #7", ok)
+	}
+	bad := New(fakeBackend{mergeErr: errors.New("boom")}, "octocat", "hello", 100, 40).mergeCmd("octocat", "hello", 7)()
+	if r, _ := bad.(actionResultMsg); r.ok || !strings.Contains(r.text, "boom") {
+		t.Fatalf("failure = %+v, want failure mentioning boom", bad)
+	}
+}
+
+func TestCloseCmdSuccessAndFailure(t *testing.T) {
+	t.Parallel()
+	ok := New(fakeBackend{}, "octocat", "hello", 100, 40).closeCmd("octocat", "hello", 7)()
+	if r, _ := ok.(actionResultMsg); !r.ok || !strings.Contains(r.text, "Closed PR #7") {
+		t.Fatalf("success = %+v, want ok mentioning PR #7", ok)
+	}
+	bad := New(fakeBackend{closeErr: errors.New("boom")}, "octocat", "hello", 100, 40).closeCmd("octocat", "hello", 7)()
+	if r, _ := bad.(actionResultMsg); r.ok || !strings.Contains(r.text, "boom") {
+		t.Fatalf("failure = %+v, want failure mentioning boom", bad)
+	}
+}
+
+func TestConfirmPromptRendered(t *testing.T) {
+	t.Parallel()
+	if v := pressKey(withPRs(2), 'M').View(); !strings.Contains(v, "Merge PR #1?") || !strings.Contains(v, "[y] Yes") {
+		t.Fatalf("merge confirm prompt missing:\n%s", v)
+	}
+	if v := pressKey(withPRs(2), 'D').View(); !strings.Contains(v, "Close PR #1?") {
+		t.Fatalf("close confirm prompt missing:\n%s", v)
+	}
+}
+
+func TestConfirmYExecutesClose(t *testing.T) {
+	t.Parallel()
+	m := pressKey(withPRs(2), 'D')
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	um := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected a close command after confirming with y")
+	}
+	if um.confirm != confirmNone {
+		t.Fatal("confirm prompt should clear after y")
+	}
+	if um.message != "Closing PR #1..." {
+		t.Fatalf("message = %q, want %q", um.message, "Closing PR #1...")
+	}
+}
+
+func TestCloseEmptyListNoOp(t *testing.T) {
+	t.Parallel()
+	if um := pressKey(withPRs(0), 'D'); um.confirm != confirmNone {
+		t.Fatalf("confirm=%v, want confirmNone on empty list", um.confirm)
 	}
 }

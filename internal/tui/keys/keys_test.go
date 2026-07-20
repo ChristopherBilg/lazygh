@@ -117,3 +117,28 @@ func TestConfigureOverridesFilterMine(t *testing.T) {
 		t.Error("after remap, 'm' should no longer match FilterMine")
 	}
 }
+
+func TestDefaultActionBindings(t *testing.T) {
+	if !key.Matches(runeMsg('a'), Map.Approve) {
+		t.Error("default Approve should match 'a'")
+	}
+	if !key.Matches(runeMsg('M'), Map.Merge) {
+		t.Error("default Merge should match 'M'")
+	}
+	if !key.Matches(runeMsg('D'), Map.Close) {
+		t.Error("default Close should match 'D'")
+	}
+}
+
+func TestConfigureOverridesMerge(t *testing.T) {
+	t.Cleanup(func() { Configure(config.Default().Keys) })
+	kc := config.Default().Keys
+	kc.Merge = []string{"g"}
+	Configure(kc)
+	if !key.Matches(runeMsg('g'), Map.Merge) {
+		t.Error("after Configure, Merge should match 'g'")
+	}
+	if key.Matches(runeMsg('M'), Map.Merge) {
+		t.Error("after remap, 'M' should no longer match Merge")
+	}
+}

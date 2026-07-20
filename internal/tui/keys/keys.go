@@ -28,6 +28,9 @@ type KeyMap struct {
 	FilterDependabot key.Binding
 	PrevTab          key.Binding
 	NextTab          key.Binding
+	Approve          key.Binding
+	Merge            key.Binding
+	Close            key.Binding
 }
 
 // Map is the process-wide key map. It starts at defaults so any code or test
@@ -63,5 +66,8 @@ func newKeyMap(kc config.KeysConfig) KeyMap {
 		FilterDependabot: b(kc.FilterDependabot, "filter: dependabot"),
 		PrevTab:          b(kc.PrevTab, "previous tab"),
 		NextTab:          b(kc.NextTab, "next tab"),
+		Approve:          b(kc.Approve, "approve pr"),
+		Merge:            b(kc.Merge, "merge pr"),
+		Close:            b(kc.Close, "close pr"),
 	}
 }

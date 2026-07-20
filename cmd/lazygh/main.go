@@ -39,6 +39,7 @@ func run() int {
 		RESTTimeout:       cfg.GitHub.RESTTimeout,
 		SubprocessTimeout: cfg.GitHub.SubprocessTimeout,
 		RepoPageSize:      cfg.GitHub.RepoPageSize,
+		MergeMethod:       cfg.GitHub.MergeMethod,
 	})
 	styles.Configure(cfg.Theme)
 	keys.Configure(cfg.Keys)

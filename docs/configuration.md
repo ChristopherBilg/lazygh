@@ -33,8 +33,9 @@ All keys are optional; any omitted key uses its default.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `github.rest_timeout` | duration | `10s` | Timeout for each GitHub REST API request. |
-| `github.subprocess_timeout` | duration | `30s` | Timeout for each `gh` subprocess call (PR checkout, open in browser). |
+| `github.subprocess_timeout` | duration | `30s` | Timeout for each `gh` subprocess call (PR checkout, open in browser, approve, merge, close). |
 | `github.repo_page_size` | integer (1–100) | `50` | Number of repositories fetched for the repository picker. Capped at 100 by the GitHub API. |
+| `github.merge_method` | enum | `merge` | How the `M` action merges a PR: `merge`, `squash`, or `rebase`. Invalid values fall back to `merge`. |
 
 Durations use Go's duration syntax — e.g. `500ms`, `10s`, `2m`, `1h` — as
 strings, not bare numbers (`10s`, not `10`).
@@ -55,6 +56,9 @@ their defaults. All keys are optional.
 | `toggle_pane` | `tab`, `shift+tab` | PR view (list ↔ detail focus) |
 | `checkout` | `c` | PR view |
 | `open` | `o` | PR view (open in browser) |
+| `approve` | `a` | PR view (submit an approving review) |
+| `merge` | `M` | PR view (merge the selected PR; asks to confirm) |
+| `close` | `D` | PR view (close the selected PR; asks to confirm) |
 | `search` | `/` | PR view (fuzzy-filter titles) |
 | `filter_mine` | `m` | PR view (show only your PRs) |
 | `filter_review` | `v` | PR view (show only PRs needing your review) |
@@ -122,7 +126,7 @@ github:
   repo_page_size: 50       # repositories fetched for the picker (1–100)
 keys:
   checkout: [c, x]         # remap / add keys; single key or a list
-  # ...any of: quit, back, up, down, select, refresh, toggle_pane, open, search, filter_mine, filter_review, filter_dependabot, nav_prs, nav_issues, nav_actions, prev_tab, next_tab
+  # ...any of: quit, back, up, down, select, refresh, toggle_pane, open, approve, merge, close, search, filter_mine, filter_review, filter_dependabot, nav_prs, nav_issues, nav_actions, prev_tab, next_tab
 theme:
   accent: "205"            # ANSI-256 index or quoted hex like "#7D56F4"
   selected: "#ff8800"
