@@ -84,6 +84,7 @@ type Backend interface {
 	RepoPRs(ctx context.Context, owner, name string, force bool) (ghClient.RepoContext, error)
 	CheckoutPR(ctx context.Context, owner, name string, prNumber int) error
 	OpenPRInBrowser(ctx context.Context, owner, name string, prNumber int) error
+	ApprovePR(ctx context.Context, owner, name string, prNumber int) error
 	PRComments(ctx context.Context, owner, name string, prNumber int, force bool) ([]ghClient.PRComment, error)
 	CurrentUser(ctx context.Context) (string, error)
 }
@@ -198,6 +199,25 @@ func (m *Model) recompute() {
 	m.viewport.GotoTop()
 }
 
+// beginForcedRefresh starts a cache-bypassing PR refetch, keeping existing PRs
+// visible (footer spinner) and re-entering the full loading view only when there
+// are no PRs yet. It returns the commands to run and deliberately does NOT touch
+// m.message, so a status line set by the caller (e.g. "Merged PR #42") survives.
+func (m *Model) beginForcedRefresh() []tea.Cmd {
+	wasFetching := m.loading || m.refreshing
+	m.fetchErr = nil
+	if len(m.ctx.PRs) == 0 {
+		m.loading = true
+	} else {
+		m.refreshing = true
+	}
+	cmds := []tea.Cmd{m.fetchPRsCmd(m.ctx.Owner, m.ctx.Name, true)}
+	if !wasFetching {
+		cmds = append(cmds, m.spinner.Tick)
+	}
+	return cmds
+}
+
 // setFilter applies quick filter f, toggling back to filterAll when f is already
 // active. It resets the cursor to the top and recomputes. It is a no-op while the
 // list is unavailable (loading, or a fatal error with no PRs to show).
@@ -297,6 +317,17 @@ func (currentUserMsg) TargetView() screen.ViewID { return screen.ViewPR }
 // statusMsg carries a transient footer status message.
 type statusMsg string
 
+// actionResultMsg carries the outcome of a PR action (approve/merge/close): a
+// pre-formatted footer line and whether it succeeded (success triggers a refresh).
+type actionResultMsg struct {
+	text string
+	ok   bool
+}
+
+// TargetView addresses an action result to the PR screen so it is delivered even
+// after a mid-action tab switch.
+func (actionResultMsg) TargetView() screen.ViewID { return screen.ViewPR }
+
 // fetchPRsCmd fetches the open PRs for the given repository. force bypasses the
 // in-memory cache. A client-init failure is fatal (ErrMsg); any other failure is
 // a recoverable FetchErrMsg.
@@ -394,6 +425,16 @@ func (m Model) openBrowserCmd(owner, name string, prNumber int) tea.Cmd {
 			return statusMsg(fmt.Sprintf("Open in browser failed: %v", err))
 		}
 		return statusMsg(fmt.Sprintf("Opened PR #%d in browser", prNumber))
+	}
+}
+
+func (m Model) approveCmd(owner, name string, prNumber int) tea.Cmd {
+	return func() tea.Msg {
+		// context.Background() for now; a program-scoped context is future work.
+		if err := m.backend.ApprovePR(context.Background(), owner, name, prNumber); err != nil {
+			return actionResultMsg{text: fmt.Sprintf("Approve PR #%d failed: %v", prNumber, err)}
+		}
+		return actionResultMsg{text: fmt.Sprintf("Approved PR #%d", prNumber), ok: true}
 	}
 }
 
@@ -502,20 +543,15 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 				m.message = "Opening browser..."
 				cmds = append(cmds, m.openBrowserCmd(m.ctx.Owner, m.ctx.Name, pr.Number))
 			}
+		case key.Matches(msg, keys.Map.Approve):
+			if pr, ok := m.selectedPR(); ok {
+				m.message = fmt.Sprintf("Approving PR #%d...", pr.Number)
+				cmds = append(cmds, m.approveCmd(m.ctx.Owner, m.ctx.Name, pr.Number))
+			}
 		case key.Matches(msg, keys.Map.Refresh):
 			// Manual refresh: bypass the cache, keep the current PRs visible.
-			wasFetching := m.loading || m.refreshing
-			m.fetchErr = nil
 			m.message = ""
-			if len(m.ctx.PRs) == 0 {
-				m.loading = true
-			} else {
-				m.refreshing = true
-			}
-			cmds = append(cmds, m.fetchPRsCmd(m.ctx.Owner, m.ctx.Name, true))
-			if !wasFetching {
-				cmds = append(cmds, m.spinner.Tick)
-			}
+			cmds = append(cmds, m.beginForcedRefresh()...)
 		case key.Matches(msg, keys.Map.NextTab):
 			m.activeTab = m.activeTab.Next()
 			cmds = append(cmds, m.maybeFetchComments())
@@ -553,6 +589,12 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 
 	case statusMsg:
 		m.message = string(msg)
+
+	case actionResultMsg:
+		m.message = msg.text
+		if msg.ok {
+			cmds = append(cmds, m.beginForcedRefresh()...)
+		}
 
 	case prCommentsMsg:
 		m.comments[msg.prNumber] = commentState{status: commentsLoaded, list: msg.comments}
@@ -798,7 +840,7 @@ func (m Model) footer() string {
 	if m.filter != filterAll {
 		filterHint = "[m/v/d] Filter (again clears)"
 	}
-	footerText := fmt.Sprintf(" [1/2/3] Views  •  [esc] Repo  •  [tab] Focus  •  [[/]] Tabs  •  [j/k] Scroll  •  [/] Search  •  %s  •  [c] Checkout  •  [o] Web  •  [r] Refresh  •  [q] Quit", filterHint)
+	footerText := fmt.Sprintf(" [1/2/3] Views  •  [esc] Repo  •  [tab] Focus  •  [[/]] Tabs  •  [j/k] Scroll  •  [/] Search  •  %s  •  [c] Checkout  •  [o] Web  •  [a] Approve  •  [r] Refresh  •  [q] Quit", filterHint)
 	if status := m.statusLine(); status != "" {
 		footerText = fmt.Sprintf(" %s | %s", status, footerText)
 	}
