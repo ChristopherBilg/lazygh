@@ -33,6 +33,16 @@ const (
 	focusDetails
 )
 
+// confirmKind identifies which impactful action a footer y/n prompt is guarding.
+type confirmKind int
+
+// Confirmation prompt states. confirmNone means no prompt is active.
+const (
+	confirmNone confirmKind = iota
+	confirmMerge
+	confirmClose
+)
+
 // commentStatus tracks the lifecycle of a PR's lazily-loaded comments.
 type commentStatus int
 
@@ -85,6 +95,8 @@ type Backend interface {
 	CheckoutPR(ctx context.Context, owner, name string, prNumber int) error
 	OpenPRInBrowser(ctx context.Context, owner, name string, prNumber int) error
 	ApprovePR(ctx context.Context, owner, name string, prNumber int) error
+	MergePR(ctx context.Context, owner, name string, prNumber int) error
+	ClosePR(ctx context.Context, owner, name string, prNumber int) error
 	PRComments(ctx context.Context, owner, name string, prNumber int, force bool) ([]ghClient.PRComment, error)
 	CurrentUser(ctx context.Context) (string, error)
 }
@@ -104,6 +116,8 @@ type Model struct {
 	input       textinput.Model // the "/" filter field
 	searching   bool            // input focused / capturing keystrokes
 	query       string          // applied filter; "" = no filter
+	confirm     confirmKind     // active impactful-action confirmation, or confirmNone
+	confirmPR   int             // PR number snapshotted when the confirm prompt opened
 	filter      prFilter        // active quick filter; filterAll = no filter
 	currentUser string          // authenticated user's login; "" until resolved
 	filtered    []int           // indices into ctx.PRs, in display (ranked) order
@@ -245,10 +259,30 @@ func (m Model) selectedPR() (ghClient.PullRequest, bool) {
 	return m.ctx.PRs[m.filtered[m.cursor]], true
 }
 
-// CapturingInput reports whether the filter field is focused and consuming keys.
-// The router consults it (via screen.InputCapturer) to suppress global keys while
-// the user is typing a filter.
-func (m Model) CapturingInput() bool { return m.searching }
+// CapturingInput reports whether this screen must receive every key: while the
+// filter field is focused (typing a search), or while an impactful-action
+// confirmation prompt is pending. The router consults it (via
+// screen.InputCapturer) to suppress global keys in those modes.
+func (m Model) CapturingInput() bool { return m.searching || m.confirm != confirmNone }
+
+// updateConfirm handles keys while an impactful-action confirmation prompt is up:
+// "y"/"Y" runs the pending action against the snapshotted PR number; every other
+// key cancels. The prompt is cleared in all cases.
+func (m Model) updateConfirm(msg tea.KeyMsg) (screen.Model, tea.Cmd) {
+	kind, prNumber := m.confirm, m.confirmPR
+	m.confirm = confirmNone
+	if s := msg.String(); s == "y" || s == "Y" {
+		switch kind {
+		case confirmMerge:
+			m.message = fmt.Sprintf("Merging PR #%d...", prNumber)
+			return m, m.mergeCmd(m.ctx.Owner, m.ctx.Name, prNumber)
+		case confirmClose:
+			m.message = fmt.Sprintf("Closing PR #%d...", prNumber)
+			return m, m.closeCmd(m.ctx.Owner, m.ctx.Name, prNumber)
+		}
+	}
+	return m, nil
+}
 
 // updateSearch handles keys while the filter field is focused: arrow keys move the
 // selection live, Enter commits (keeps the filter, blurs the field), Esc cancels
@@ -438,6 +472,26 @@ func (m Model) approveCmd(owner, name string, prNumber int) tea.Cmd {
 	}
 }
 
+func (m Model) mergeCmd(owner, name string, prNumber int) tea.Cmd {
+	return func() tea.Msg {
+		// context.Background() for now; a program-scoped context is future work.
+		if err := m.backend.MergePR(context.Background(), owner, name, prNumber); err != nil {
+			return actionResultMsg{text: fmt.Sprintf("Merge PR #%d failed: %v", prNumber, err)}
+		}
+		return actionResultMsg{text: fmt.Sprintf("Merged PR #%d", prNumber), ok: true}
+	}
+}
+
+func (m Model) closeCmd(owner, name string, prNumber int) tea.Cmd {
+	return func() tea.Msg {
+		// context.Background() for now; a program-scoped context is future work.
+		if err := m.backend.ClosePR(context.Background(), owner, name, prNumber); err != nil {
+			return actionResultMsg{text: fmt.Sprintf("Close PR #%d failed: %v", prNumber, err)}
+		}
+		return actionResultMsg{text: fmt.Sprintf("Closed PR #%d", prNumber), ok: true}
+	}
+}
+
 // currentUserCmd resolves the authenticated user's login (memoized in the
 // client). A failure is logged and reported as an empty login, which simply
 // leaves the user-dependent filters matching nothing.
@@ -484,6 +538,9 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		return m, cmd
 
 	case tea.KeyMsg:
+		if m.confirm != confirmNone {
+			return m.updateConfirm(msg)
+		}
 		if m.searching {
 			return m.updateSearch(msg)
 		}
@@ -547,6 +604,16 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 			if pr, ok := m.selectedPR(); ok {
 				m.message = fmt.Sprintf("Approving PR #%d...", pr.Number)
 				cmds = append(cmds, m.approveCmd(m.ctx.Owner, m.ctx.Name, pr.Number))
+			}
+		case key.Matches(msg, keys.Map.Merge):
+			if pr, ok := m.selectedPR(); ok {
+				m.confirm = confirmMerge
+				m.confirmPR = pr.Number
+			}
+		case key.Matches(msg, keys.Map.Close):
+			if pr, ok := m.selectedPR(); ok {
+				m.confirm = confirmClose
+				m.confirmPR = pr.Number
 			}
 		case key.Matches(msg, keys.Map.Refresh):
 			// Manual refresh: bypass the cache, keep the current PRs visible.
@@ -830,9 +897,17 @@ func (m Model) renderList(paneWidth int) string {
 	return b.String()
 }
 
-// footer renders the hint bar for the current state: search hints while typing,
-// otherwise the normal action hints (with any transient status prefixed).
+// footer renders the hint bar for the current state: an impactful-action
+// confirmation prompt, search hints while typing, or otherwise the normal
+// action hints (with any transient status prefixed).
 func (m Model) footer() string {
+	if m.confirm != confirmNone {
+		verb := "Merge"
+		if m.confirm == confirmClose {
+			verb = "Close"
+		}
+		return fmt.Sprintf(" %s PR #%d?  •  [y] Yes  •  [n/esc] No", verb, m.confirmPR)
+	}
 	if m.searching {
 		return fmt.Sprintf(" Search: %s  •  [esc] Cancel  •  [enter] Apply  •  [↑/↓] Move", m.query)
 	}
@@ -840,7 +915,7 @@ func (m Model) footer() string {
 	if m.filter != filterAll {
 		filterHint = "[m/v/d] Filter (again clears)"
 	}
-	footerText := fmt.Sprintf(" [1/2/3] Views  •  [esc] Repo  •  [tab] Focus  •  [[/]] Tabs  •  [j/k] Scroll  •  [/] Search  •  %s  •  [c] Checkout  •  [o] Web  •  [a] Approve  •  [r] Refresh  •  [q] Quit", filterHint)
+	footerText := fmt.Sprintf(" [1/2/3] Views  •  [esc] Repo  •  [tab] Focus  •  [[/]] Tabs  •  [j/k] Scroll  •  [/] Search  •  %s  •  [c] Checkout  •  [o] Web  •  [a/M/D] Approve/Merge/Close  •  [r] Refresh  •  [q] Quit", filterHint)
 	if status := m.statusLine(); status != "" {
 		footerText = fmt.Sprintf(" %s | %s", status, footerText)
 	}
