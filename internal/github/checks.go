@@ -56,10 +56,12 @@ func (c *Client) RepoPRChecks(ctx context.Context, owner, name string) (map[int]
 		"pr", "list", "--repo", repo, "--state", "open",
 		"--json", "number,statusCheckRollup", "--limit", strconv.Itoa(checksFetchLimit))
 	if err != nil {
-		slog.Warn("fetch pr checks failed", "repo", repo, "err", err)
+		// Fold gh's stderr into the error BEFORE logging, so the Warn line (visible at
+		// the default level) carries the actual failure cause, not a bare "exit status 1".
 		if detail := strings.TrimSpace(stderr.String()); detail != "" {
-			return nil, fmt.Errorf("%w: %s", err, detail)
+			err = fmt.Errorf("%w: %s", err, detail)
 		}
+		slog.Warn("fetch pr checks failed", "repo", repo, "err", err)
 		return nil, err
 	}
 	var rows []prCheckRow

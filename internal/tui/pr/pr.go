@@ -1069,11 +1069,17 @@ func (m Model) renderList(paneWidth int) string {
 	for row, idx := range m.filtered {
 		pr := m.ctx.PRs[idx]
 		cursorStr := "  "
-		icon := checkIcon(m.checks[pr.Number]) // missing key → CheckNone → blank cell
-		// Reserve columns for the 2-col cursor prefix and the status icon cell so the
-		// title never overflows the pane. TruncateEllipsis is width-aware and never
-		// panics on narrow widths.
-		title := styles.TruncateEllipsis(fmt.Sprintf("#%d %s", pr.Number, pr.Title), paneWidth-2-checkIconWidth)
+		// Reserve 2 columns for the cursor prefix; add the fixed-width status cell only
+		// when the pane is wide enough to hold it plus some title, so the emitted row
+		// never exceeds paneWidth (a very narrow pane simply drops the icon).
+		// TruncateEllipsis is width-aware and never panics on narrow widths.
+		icon := ""
+		titleWidth := paneWidth - 2
+		if titleWidth > checkIconWidth {
+			icon = checkIcon(m.checks[pr.Number]) // missing key → CheckNone → blank cell
+			titleWidth -= checkIconWidth
+		}
+		title := styles.TruncateEllipsis(fmt.Sprintf("#%d %s", pr.Number, pr.Title), titleWidth)
 		if m.cursor == row {
 			cursorStr = "> "
 			title = styles.SelectedItem.Render(title)

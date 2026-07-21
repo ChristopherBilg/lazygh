@@ -1813,6 +1813,21 @@ func TestCheckStatusNeutralWhenAbsent(t *testing.T) {
 	}
 }
 
+func TestCheckStatusRowFitsNarrowPane(t *testing.T) {
+	t.Parallel()
+	m := withPRs(2)
+	m.checks = map[int]ghClient.CheckStatus{1: ghClient.CheckPassing, 2: ghClient.CheckFailing}
+	// The row prefix (cursor + optional status cell) must never push a row past the
+	// pane width, even when the pane is too narrow to hold the status cell at all.
+	for _, w := range []int{2, 3, 4, 5, 8, 12} {
+		for line := range strings.SplitSeq(strings.TrimRight(m.renderList(w), "\n"), "\n") {
+			if lipgloss.Width(line) > w {
+				t.Errorf("paneWidth=%d: row %q width %d exceeds pane", w, line, lipgloss.Width(line))
+			}
+		}
+	}
+}
+
 func TestPRChecksMsgPopulatesMap(t *testing.T) {
 	t.Parallel()
 	updated, _ := withPRs(2).Update(prChecksMsg{checks: map[int]ghClient.CheckStatus{1: ghClient.CheckFailing}})
