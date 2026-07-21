@@ -10,6 +10,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/ChristopherBilg/lazygh/internal/config"
 	ghClient "github.com/ChristopherBilg/lazygh/internal/github"
@@ -34,6 +35,8 @@ type fakeBackend struct {
 	commentsErr    error
 	currentUser    string
 	currentUserErr error
+	checks         map[int]ghClient.CheckStatus
+	checksErr      error
 }
 
 func (f fakeBackend) RepoPRs(_ context.Context, owner, name string, _ bool) (ghClient.RepoContext, error) {
@@ -56,6 +59,10 @@ func (f fakeBackend) PRComments(_ context.Context, _, _ string, _ int, _ bool) (
 
 func (f fakeBackend) CurrentUser(context.Context) (string, error) {
 	return f.currentUser, f.currentUserErr
+}
+
+func (f fakeBackend) RepoPRChecks(_ context.Context, _, _ string) (map[int]ghClient.CheckStatus, error) {
+	return f.checks, f.checksErr
 }
 
 // comment builds a PRComment with the given author login and body.
@@ -1754,5 +1761,113 @@ func TestCloseEmptyListNoOp(t *testing.T) {
 	t.Parallel()
 	if um := pressKey(withPRs(0), 'D'); um.confirm != confirmNone {
 		t.Fatalf("confirm=%v, want confirmNone on empty list", um.confirm)
+	}
+}
+
+// drainCmd executes cmd, recursively flattening tea.BatchMsg, returning all leaf
+// messages it produces. Used to assert which fetches a handler dispatched.
+func drainCmd(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	switch msg := cmd().(type) {
+	case tea.BatchMsg:
+		var out []tea.Msg
+		for _, c := range msg {
+			out = append(out, drainCmd(c)...)
+		}
+		return out
+	default:
+		return []tea.Msg{msg}
+	}
+}
+
+func TestCheckIconFixedWidth(t *testing.T) {
+	t.Parallel()
+	for _, s := range []ghClient.CheckStatus{ghClient.CheckNone, ghClient.CheckPassing, ghClient.CheckFailing, ghClient.CheckPending} {
+		if w := lipgloss.Width(checkIcon(s)); w != checkIconWidth {
+			t.Errorf("checkIcon(%v) width = %d, want %d", s, w, checkIconWidth)
+		}
+	}
+}
+
+func TestCheckStatusIconsRender(t *testing.T) {
+	t.Parallel()
+	m := withPRs(3)
+	m.checks = map[int]ghClient.CheckStatus{1: ghClient.CheckPassing, 2: ghClient.CheckFailing, 3: ghClient.CheckPending}
+	m.updateViewportContent()
+	out := m.View()
+	for _, want := range []string{"✅", "❌", "🔄"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("View() missing %q\n%s", want, out)
+		}
+	}
+}
+
+func TestCheckStatusNeutralWhenAbsent(t *testing.T) {
+	t.Parallel()
+	m := withPRs(2)
+	m.checks = map[int]ghClient.CheckStatus{1: ghClient.CheckPassing} // #2 has no entry
+	out := m.View()
+	if got := strings.Count(out, "✅"); got != 1 {
+		t.Errorf("✅ count = %d, want 1", got)
+	}
+	if strings.Contains(out, "❌") || strings.Contains(out, "🔄") {
+		t.Errorf("unexpected non-neutral glyph for a PR with no checks\n%s", out)
+	}
+}
+
+func TestPRChecksMsgPopulatesMap(t *testing.T) {
+	t.Parallel()
+	updated, _ := withPRs(2).Update(prChecksMsg{checks: map[int]ghClient.CheckStatus{1: ghClient.CheckFailing}})
+	if got := updated.(Model).checks[1]; got != ghClient.CheckFailing {
+		t.Errorf("checks[1] = %v, want CheckFailing", got)
+	}
+}
+
+func TestPRChecksErrLeavesScreenHealthy(t *testing.T) {
+	t.Parallel()
+	updated, _ := withPRs(2).Update(prChecksErrMsg{err: errors.New("boom")})
+	got := updated.(Model)
+	if got.fetchErr != nil {
+		t.Errorf("fetchErr = %v, want nil (a check-fetch error must not error the screen)", got.fetchErr)
+	}
+	if len(got.checks) != 0 {
+		t.Errorf("checks = %v, want empty (indicators stay neutral)", got.checks)
+	}
+}
+
+func TestFetchChecksCmdSuccess(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{checks: map[int]ghClient.CheckStatus{7: ghClient.CheckPassing}}, "octocat", "hello", 100, 40)
+	msg := m.fetchChecksCmd("octocat", "hello")()
+	cm, ok := msg.(prChecksMsg)
+	if !ok {
+		t.Fatalf("msg type = %T, want prChecksMsg", msg)
+	}
+	if cm.checks[7] != ghClient.CheckPassing {
+		t.Errorf("checks[7] = %v, want CheckPassing", cm.checks[7])
+	}
+}
+
+func TestFetchChecksCmdError(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{checksErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	if _, ok := m.fetchChecksCmd("octocat", "hello")().(prChecksErrMsg); !ok {
+		t.Fatal("expected prChecksErrMsg on backend error")
+	}
+}
+
+func TestPRDataDispatchesChecksFetch(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{checks: map[int]ghClient.CheckStatus{1: ghClient.CheckPassing}}, "octocat", "hello", 100, 40)
+	prs := []ghClient.PullRequest{{Number: 1, Title: "one", State: "open"}}
+	_, cmd := m.Update(prDataMsg(ghClient.RepoContext{Owner: "octocat", Name: "hello", PRs: prs}))
+	found := slices.ContainsFunc(drainCmd(cmd), func(msg tea.Msg) bool {
+		_, ok := msg.(prChecksMsg)
+		return ok
+	})
+	if !found {
+		t.Fatal("prDataMsg did not dispatch a check-status fetch")
 	}
 }
