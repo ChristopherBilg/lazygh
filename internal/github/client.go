@@ -196,7 +196,8 @@ const ghMaxPerPage = 100
 
 // reposEndpoint builds one page of the repo-picker REST path; sort=pushed surfaces
 // the most recently active repos first. perPage is the per-request batch size
-// (github.repo_page_size); paging fetches every page, so the picker sees all repos.
+// (github.repo_page_size); paging fetches pages up to the maxPages cap, so the
+// picker sees at most maxPages*perPage repos.
 func reposEndpoint(perPage, page int) string {
 	return fmt.Sprintf("user/repos?sort=pushed&per_page=%d&page=%d", perPage, page)
 }
@@ -213,8 +214,10 @@ func prCommentsEndpoint(owner, name string, prNumber, perPage, page int) string 
 }
 
 // FetchUserRepositories gets the authenticated user's repositories, most recently
-// pushed first, across all pages. github.repo_page_size sets the per-request batch
-// size (default 50, range 1–100); paging continues until every repository is fetched.
+// pushed first, paging until a short page or the maxPages cap. github.repo_page_size
+// sets the per-request batch size (default 50, range 1–100); on very large accounts the
+// cap truncates the result to maxPages*repo_page_size repos (logged), so callers must
+// not assume it is always exhaustive.
 func (c *Client) FetchUserRepositories(ctx context.Context) ([]Repository, error) {
 	client, err := c.newRESTClient()
 	if err != nil {
@@ -229,7 +232,9 @@ func (c *Client) FetchUserRepositories(ctx context.Context) ([]Repository, error
 	})
 }
 
-// FetchRepoPRs fetches all pull requests for the given owner/name, across all pages.
+// FetchRepoPRs fetches the pull requests for the given owner/name, paging until a short
+// page or the maxPages cap (which can truncate the result to maxPages*ghMaxPerPage PRs,
+// logged).
 func (c *Client) FetchRepoPRs(ctx context.Context, owner, name string) (RepoContext, error) {
 	client, err := c.newRESTClient()
 	if err != nil {
@@ -248,8 +253,9 @@ func (c *Client) FetchRepoPRs(ctx context.Context, owner, name string) (RepoCont
 	return RepoContext{Owner: owner, Name: name, PRs: prs}, nil
 }
 
-// FetchPRComments fetches all conversation comments for the given PR of owner/name,
-// across all pages, in the API's chronological (reading) order.
+// FetchPRComments fetches the conversation comments for the given PR of owner/name, in
+// the API's chronological (reading) order, paging until a short page or the maxPages cap
+// (which can truncate the result to maxPages*ghMaxPerPage comments, logged).
 func (c *Client) FetchPRComments(ctx context.Context, owner, name string, prNumber int) ([]PRComment, error) {
 	client, err := c.newRESTClient()
 	if err != nil {
