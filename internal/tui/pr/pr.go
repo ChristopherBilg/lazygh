@@ -709,9 +709,12 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		m.checks = msg.checks // the next View() frame renders the icons
 
 	case prChecksErrMsg:
-		// Non-fatal; indicators stay neutral. RepoPRChecks already logged the cause
-		// at Warn; note it here at Debug for TUI-side tracing.
-		slog.Debug("pr check statuses unavailable; indicators left neutral", "err", msg.err)
+		// Non-fatal: keep the last-known statuses rather than clearing them, so a
+		// transient refresh failure doesn't blank every indicator (mirrors how the
+		// PR list keeps its rows on a failed refresh). On a first-load failure the
+		// map is still empty, so indicators render neutral. RepoPRChecks already
+		// logged the cause at Warn; note it here at Debug for TUI-side tracing.
+		slog.Debug("pr check statuses unavailable; keeping last-known indicators", "err", msg.err)
 
 	default:
 		// Forward any other message (e.g. the textinput's cursor-blink tick) to
