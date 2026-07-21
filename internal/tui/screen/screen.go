@@ -35,6 +35,24 @@ type Addressed interface {
 	TargetView() ViewID
 }
 
+// Generational is implemented by addressed messages that carry the model
+// generation under which their command was issued. The router drops a
+// Generational message whose generation no longer matches the current repo
+// selection: its target view has been rebuilt for a different repository, so the
+// result is stale (issue #46). Messages without a generation (e.g. the
+// persistent repo list's own results) are never dropped.
+type Generational interface {
+	Generation() uint64
+}
+
+// GenStamp is embedded in generational messages to supply Generation() from a
+// single Gen field. Its zero value is generation 0, which matches a zero-value
+// router (before any repo is selected), so an unstamped message routes normally.
+type GenStamp struct{ Gen uint64 }
+
+// Generation reports the model generation this message was stamped with.
+func (g GenStamp) Generation() uint64 { return g.Gen }
+
 // InputCapturer is implemented by screens that can enter a mode where they must
 // receive every key (e.g. a text filter). While CapturingInput returns true, the
 // router suppresses its global key handling and forwards keys straight to the
@@ -56,6 +74,7 @@ type ErrMsg struct{ Err error }
 // content, and lets the user retry. It implements Addressed; TargetView reports
 // its View field.
 type FetchErrMsg struct {
+	GenStamp
 	View ViewID
 	Err  error
 }
@@ -65,3 +84,5 @@ type FetchErrMsg struct {
 func (m FetchErrMsg) TargetView() ViewID { return m.View }
 
 var _ Addressed = FetchErrMsg{}
+var _ Generational = FetchErrMsg{}
+var _ Generational = GenStamp{}
