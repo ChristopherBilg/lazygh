@@ -1,5 +1,5 @@
 // Package github wraps the GitHub REST API and `gh` subprocess calls lazygh
-// needs (repository listing, pull requests, PR comments, checkout, open-in-browser), with a
+// needs (repository listing, pull requests, PR comments, PR diffs, checkout, open-in-browser), with a
 // small in-memory response cache. All outbound calls are bounded by timeouts.
 package github
 
@@ -281,6 +281,30 @@ func (c *Client) OpenPRInBrowser(ctx context.Context, owner, name string, prNumb
 	}
 	slog.Info("opened pr in browser", "repo", repo, "pr", prNumber)
 	return nil
+}
+
+// FetchPRDiff fetches the unified diff for the given PR of owner/name by running
+// `gh pr diff`. Passing --repo scopes gh to the selected repository (like
+// OpenPRInBrowser), so it works for any selected repo, not just a local clone.
+// The subprocess is not a TTY, so gh emits a plain (uncolored) unified diff, which
+// is what the diff renderer highlights.
+func (c *Client) FetchPRDiff(ctx context.Context, owner, name string, prNumber int) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.subprocessTimeout)
+	defer cancel()
+	repo := fmt.Sprintf("%s/%s", owner, name)
+	stdout, stderr, err := c.exec(ctx, "pr", "diff", strconv.Itoa(prNumber), "--repo", repo)
+	if err != nil {
+		detail := strings.TrimSpace(stderr.String())
+		slog.Warn("fetch pr diff failed", "repo", repo, "pr", prNumber, "err", err, "stderr", detail)
+		if detail != "" {
+			// Fold gh's stderr into the error so the in-tab failure state shows the
+			// actionable reason, not a bare "exit status 1" (mirrors prSubcommand).
+			return "", fmt.Errorf("%w: %s", err, detail)
+		}
+		return "", err
+	}
+	slog.Info("fetched pr diff", "repo", repo, "pr", prNumber, "bytes", stdout.Len())
+	return stdout.String(), nil
 }
 
 // isValidMergeMethod reports whether m is one of gh's supported merge methods.

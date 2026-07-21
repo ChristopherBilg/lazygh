@@ -14,7 +14,8 @@
 
 - ✅ **Repository picker** — jump into any of your most recently pushed repositories
 - ✅ **Pull-request browsing** — a split-pane list + detail view of a repo's open PRs
-- ✅ **Tabbed PR detail** — switch the right pane between Description and Comments with `[`/`]` (Files Changed is a placeholder for the upcoming diff viewer)
+- ✅ **Tabbed PR detail** — switch the right pane between Description, Files Changed, and Comments with `[`/`]`
+- ✅ **Syntax-highlighted diff viewer** — the Files Changed tab renders the PR's diff (via `gh pr diff`) with per-language syntax highlighting and `+`/`-` gutters, scrollable like the rest of the detail pane
 - ✅ **PR actions** — check a PR out locally (`c`) or open it in your browser (`o`)
 - ✅ **Fuzzy PR search** (`/`) — filter the pull-request list by title as you type
 - ✅ **Quick PR filters** — one keystroke to focus on **My PRs** (`m`), **Needs my Review** (`v`), or **Dependabot** (`d`); press the active key again to clear
