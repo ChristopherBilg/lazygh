@@ -300,17 +300,24 @@ func TestCheckoutPRMatchesCaseInsensitively(t *testing.T) {
 
 func TestReposEndpoint(t *testing.T) {
 	t.Parallel()
-	if got, want := reposEndpoint(50), "user/repos?sort=pushed&per_page=50"; got != want {
-		t.Errorf("reposEndpoint(50) = %q, want %q", got, want)
+	if got, want := reposEndpoint(50, 1), "user/repos?sort=pushed&per_page=50&page=1"; got != want {
+		t.Errorf("reposEndpoint(50, 1) = %q, want %q", got, want)
 	}
-	if got, want := reposEndpoint(10), "user/repos?sort=pushed&per_page=10"; got != want {
-		t.Errorf("reposEndpoint(10) = %q, want %q", got, want)
+	if got, want := reposEndpoint(10, 3), "user/repos?sort=pushed&per_page=10&page=3"; got != want {
+		t.Errorf("reposEndpoint(10, 3) = %q, want %q", got, want)
+	}
+}
+
+func TestPRsEndpoint(t *testing.T) {
+	t.Parallel()
+	if got, want := prsEndpoint("octocat", "hello", 100, 2), "repos/octocat/hello/pulls?per_page=100&page=2"; got != want {
+		t.Errorf("prsEndpoint = %q, want %q", got, want)
 	}
 }
 
 func TestPRCommentsEndpoint(t *testing.T) {
 	t.Parallel()
-	if got, want := prCommentsEndpoint("octocat", "hello", 42), "repos/octocat/hello/issues/42/comments?per_page=100"; got != want {
+	if got, want := prCommentsEndpoint("octocat", "hello", 42, 100, 1), "repos/octocat/hello/issues/42/comments?per_page=100&page=1"; got != want {
 		t.Errorf("prCommentsEndpoint = %q, want %q", got, want)
 	}
 }
@@ -745,7 +752,7 @@ func TestPaginateReturnsErrorFromLaterPage(t *testing.T) {
 	t.Parallel()
 	wantErr := errors.New("boom on page 2")
 	calls := 0
-	_, err := paginate(t.Context(), 2, func(_ context.Context, page int) ([]int, error) {
+	got, err := paginate(t.Context(), 2, func(_ context.Context, page int) ([]int, error) {
 		calls++
 		if page == 1 {
 			return []int{1, 2}, nil // full page => keep paging
@@ -754,6 +761,9 @@ func TestPaginateReturnsErrorFromLaterPage(t *testing.T) {
 	})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("err = %v, want %v", err, wantErr)
+	}
+	if got != nil {
+		t.Fatalf("expected nil result on later-page error (no partial), got %v", got)
 	}
 	if calls != 2 {
 		t.Fatalf("calls = %d, want 2", calls)

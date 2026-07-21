@@ -171,6 +171,8 @@ const maxPages = 20
 // each such request is bounded by the REST client's per-request timeout, and
 // maxPages bounds the total request count. An error from any page aborts paging and
 // is returned with no partial result.
+// perPage must be positive; with a non-positive perPage the short-page check never
+// trips and paging runs to the maxPages cap.
 func paginate[T any](ctx context.Context, perPage int, fetchPage func(ctx context.Context, page int) ([]T, error)) ([]T, error) {
 	var all []T
 	for page := 1; page <= maxPages; page++ {
@@ -188,59 +190,78 @@ func paginate[T any](ctx context.Context, perPage int, fetchPage func(ctx contex
 	return all, nil
 }
 
-// reposEndpoint builds the repo-picker REST path; sort=pushed surfaces the most
-// recently active repos first.
-func reposEndpoint(pageSize int) string {
-	return fmt.Sprintf("user/repos?sort=pushed&per_page=%d", pageSize)
+// ghMaxPerPage is GitHub's maximum per_page for list endpoints; the PR and comment
+// fetches request full pages of this size.
+const ghMaxPerPage = 100
+
+// reposEndpoint builds one page of the repo-picker REST path; sort=pushed surfaces
+// the most recently active repos first. perPage is the per-request batch size
+// (github.repo_page_size); paging fetches every page, so the picker sees all repos.
+func reposEndpoint(perPage, page int) string {
+	return fmt.Sprintf("user/repos?sort=pushed&per_page=%d&page=%d", perPage, page)
 }
 
-// prCommentsEndpoint builds the REST path for a PR's conversation comments. PR
+// prsEndpoint builds one page of a repository's pull-requests REST path.
+func prsEndpoint(owner, name string, perPage, page int) string {
+	return fmt.Sprintf("repos/%s/%s/pulls?per_page=%d&page=%d", owner, name, perPage, page)
+}
+
+// prCommentsEndpoint builds one page of a PR's conversation-comments REST path. PR
 // conversation comments are issue comments, so this targets the issues endpoint.
-// per_page=100 fetches a single large page; full pagination is future work.
-func prCommentsEndpoint(owner, name string, prNumber int) string {
-	return fmt.Sprintf("repos/%s/%s/issues/%d/comments?per_page=100", owner, name, prNumber)
+func prCommentsEndpoint(owner, name string, prNumber, perPage, page int) string {
+	return fmt.Sprintf("repos/%s/%s/issues/%d/comments?per_page=%d&page=%d", owner, name, prNumber, perPage, page)
 }
 
-// FetchUserRepositories gets the most recently pushed-to repositories for the
-// authenticated user. per_page defaults to 50 and is overridable via ClientConfig.
+// FetchUserRepositories gets the authenticated user's repositories, most recently
+// pushed first, across all pages. github.repo_page_size sets the per-request batch
+// size (default 50, range 1–100); paging continues until every repository is fetched.
 func (c *Client) FetchUserRepositories(ctx context.Context) ([]Repository, error) {
 	client, err := c.newRESTClient()
 	if err != nil {
 		return nil, err
 	}
-	var repos []Repository
-	if err := client.DoWithContext(ctx, http.MethodGet, reposEndpoint(c.pageSize), nil, &repos); err != nil {
-		return nil, err
-	}
-	return repos, nil
+	return paginate(ctx, c.pageSize, func(ctx context.Context, page int) ([]Repository, error) {
+		var repos []Repository
+		if err := client.DoWithContext(ctx, http.MethodGet, reposEndpoint(c.pageSize, page), nil, &repos); err != nil {
+			return nil, err
+		}
+		return repos, nil
+	})
 }
 
-// FetchRepoPRs fetches the pull requests for the given owner/name.
+// FetchRepoPRs fetches all pull requests for the given owner/name, across all pages.
 func (c *Client) FetchRepoPRs(ctx context.Context, owner, name string) (RepoContext, error) {
 	client, err := c.newRESTClient()
 	if err != nil {
 		return RepoContext{}, err
 	}
-	endpoint := fmt.Sprintf("repos/%s/%s/pulls", owner, name)
-	var prs []PullRequest
-	if err := client.DoWithContext(ctx, http.MethodGet, endpoint, nil, &prs); err != nil {
+	prs, err := paginate(ctx, ghMaxPerPage, func(ctx context.Context, page int) ([]PullRequest, error) {
+		var prs []PullRequest
+		if err := client.DoWithContext(ctx, http.MethodGet, prsEndpoint(owner, name, ghMaxPerPage, page), nil, &prs); err != nil {
+			return nil, err
+		}
+		return prs, nil
+	})
+	if err != nil {
 		return RepoContext{}, err
 	}
 	return RepoContext{Owner: owner, Name: name, PRs: prs}, nil
 }
 
-// FetchPRComments fetches the conversation comments for the given PR of
-// owner/name, in the API's chronological (reading) order.
+// FetchPRComments fetches all conversation comments for the given PR of owner/name,
+// across all pages, in the API's chronological (reading) order.
 func (c *Client) FetchPRComments(ctx context.Context, owner, name string, prNumber int) ([]PRComment, error) {
 	client, err := c.newRESTClient()
 	if err != nil {
 		return nil, err
 	}
-	var comments []PRComment
-	if err := client.DoWithContext(ctx, http.MethodGet, prCommentsEndpoint(owner, name, prNumber), nil, &comments); err != nil {
-		return nil, err
-	}
-	return comments, nil
+	return paginate(ctx, ghMaxPerPage, func(ctx context.Context, page int) ([]PRComment, error) {
+		var comments []PRComment
+		if err := client.DoWithContext(ctx, http.MethodGet, prCommentsEndpoint(owner, name, prNumber, ghMaxPerPage, page), nil, &comments); err != nil {
+			return nil, err
+		}
+		return comments, nil
+	})
 }
 
 // fetchLoginREST resolves the authenticated user's login via REST GET user.
