@@ -209,7 +209,7 @@ func TestPRDataMsgPopulates(t *testing.T) {
 		Name:  "hello",
 		PRs:   []ghClient.PullRequest{{Number: 1, Title: "T", State: "open"}, {Number: 2}},
 	}
-	updated, _ := m.Update(prDataMsg(ctx))
+	updated, _ := m.Update(prDataMsg{ctx: ctx})
 	um := updated.(Model)
 	if um.loading {
 		t.Fatal("expected loading=false after prDataMsg")
@@ -275,7 +275,7 @@ func TestPRDataMsgClearsRefreshingState(t *testing.T) {
 		Name:  "hello",
 		PRs:   []ghClient.PullRequest{{Number: 1, Title: "T", State: "open"}},
 	}
-	updated, _ := m.Update(prDataMsg(ctx))
+	updated, _ := m.Update(prDataMsg{ctx: ctx})
 	if updated.(Model).refreshing {
 		t.Fatal("expected refreshing=false after data lands")
 	}
@@ -291,7 +291,7 @@ func TestPRDataMsgClampsCursorWhenListShrinks(t *testing.T) {
 		PRs:   []ghClient.PullRequest{{Number: 1, Title: "T", State: "open"}},
 	}
 	// Must not panic: updateViewportContent indexes PRs[cursor].
-	updated, _ := m.Update(prDataMsg(ctx))
+	updated, _ := m.Update(prDataMsg{ctx: ctx})
 	if got := updated.(Model).cursor; got != 0 {
 		t.Fatalf("cursor = %d, want 0 after list shrank to 1", got)
 	}
@@ -312,7 +312,7 @@ func TestPRDataMsgResetsScrollOnRefresh(t *testing.T) {
 		Name:  "hello",
 		PRs:   []ghClient.PullRequest{{Number: 1, Title: "T", State: "open", Body: strings.Repeat("line\n", 200)}},
 	}
-	updated, _ := m.Update(prDataMsg(ctx))
+	updated, _ := m.Update(prDataMsg{ctx: ctx})
 	if !updated.(Model).viewport.AtTop() {
 		t.Fatal("refresh should reset the viewport scroll to the top")
 	}
@@ -327,7 +327,7 @@ func TestPRDataMsgPreservesNonRefreshMessage(t *testing.T) {
 		Name:  "hello",
 		PRs:   []ghClient.PullRequest{{Number: 1, Title: "T", State: "open"}},
 	}
-	updated, _ := m.Update(prDataMsg(ctx))
+	updated, _ := m.Update(prDataMsg{ctx: ctx})
 	if got := updated.(Model).message; got != "Opened PR #1 in browser" {
 		t.Fatalf("message = %q, want it preserved (only \"Refreshing...\" should be cleared)", got)
 	}
@@ -335,7 +335,7 @@ func TestPRDataMsgPreservesNonRefreshMessage(t *testing.T) {
 
 func TestPRDataMsgTargetView(t *testing.T) {
 	t.Parallel()
-	if prDataMsg(ghClient.RepoContext{}).TargetView() != screen.ViewPR {
+	if (prDataMsg{}).TargetView() != screen.ViewPR {
 		t.Fatal("prDataMsg must target the PR view")
 	}
 }
@@ -345,7 +345,7 @@ func TestPRDataMsgClearsFetchErr(t *testing.T) {
 	m := withPRs(1)
 	m.fetchErr = errors.New("old")
 	ctx := ghClient.RepoContext{Owner: "o", Name: "n", PRs: []ghClient.PullRequest{{Number: 1}}}
-	updated, _ := m.Update(prDataMsg(ctx))
+	updated, _ := m.Update(prDataMsg{ctx: ctx})
 	if updated.(Model).fetchErr != nil {
 		t.Fatal("expected fetchErr cleared after successful data")
 	}
@@ -438,7 +438,7 @@ func TestCheckoutCmdUnavailableMessage(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected statusMsg, got %T", msg)
 	}
-	if got := string(status); !strings.Contains(got, "Checkout unavailable") || !strings.Contains(got, "octocat/other") {
+	if got := status.text; !strings.Contains(got, "Checkout unavailable") || !strings.Contains(got, "octocat/other") {
 		t.Fatalf("status = %q, want 'Checkout unavailable' mentioning octocat/other", got)
 	}
 }
@@ -451,7 +451,7 @@ func TestCheckoutCmdSuccessMessage(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected statusMsg, got %T", msg)
 	}
-	if got := string(status); !strings.Contains(got, "Successfully checked out PR #7") {
+	if got := status.text; !strings.Contains(got, "Successfully checked out PR #7") {
 		t.Fatalf("status = %q, want success message", got)
 	}
 }
@@ -464,7 +464,7 @@ func TestCheckoutCmdFailureMessage(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected statusMsg, got %T", msg)
 	}
-	if got := string(status); !strings.Contains(got, "Checkout failed") || !strings.Contains(got, "boom") {
+	if got := status.text; !strings.Contains(got, "Checkout failed") || !strings.Contains(got, "boom") {
 		t.Fatalf("status = %q, want failure message", got)
 	}
 }
@@ -477,7 +477,7 @@ func TestOpenBrowserCmdSuccessMessage(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected statusMsg, got %T", msg)
 	}
-	if got := string(status); !strings.Contains(got, "Opened PR #9 in browser") {
+	if got := status.text; !strings.Contains(got, "Opened PR #9 in browser") {
 		t.Fatalf("status = %q, want success message", got)
 	}
 }
@@ -490,7 +490,7 @@ func TestOpenBrowserCmdFailureMessage(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected statusMsg, got %T", msg)
 	}
-	if got := string(status); !strings.Contains(got, "Open in browser failed") || !strings.Contains(got, "boom") {
+	if got := status.text; !strings.Contains(got, "Open in browser failed") || !strings.Contains(got, "boom") {
 		t.Fatalf("status = %q, want failure message", got)
 	}
 }
@@ -504,8 +504,8 @@ func TestFetchPRsCmdSuccessReturnsData(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected prDataMsg, got %T", msg)
 	}
-	if len(data.PRs) != 1 {
-		t.Fatalf("len(PRs) = %d, want 1", len(data.PRs))
+	if len(data.ctx.PRs) != 1 {
+		t.Fatalf("len(PRs) = %d, want 1", len(data.ctx.PRs))
 	}
 }
 
@@ -812,7 +812,7 @@ func TestRefreshPreservesFilter(t *testing.T) {
 		{Number: 10, Title: "cache warmup", State: "open"},
 		{Number: 11, Title: "unrelated", State: "open"},
 	}}
-	dm, _ := m.Update(prDataMsg(ctx))
+	dm, _ := m.Update(prDataMsg{ctx: ctx})
 	m = dm.(Model)
 	if m.query != "cache" || len(m.filtered) != 1 {
 		t.Fatalf("query=%q filtered=%d, want cache/1 preserved across refresh", m.query, len(m.filtered))
@@ -1022,7 +1022,7 @@ func TestFilterAllUnchanged(t *testing.T) {
 func TestCurrentUserMsgStoresLogin(t *testing.T) {
 	t.Parallel()
 	m := withPRs(2)
-	updated, _ := m.Update(currentUserMsg("octocat"))
+	updated, _ := m.Update(currentUserMsg{login: "octocat"})
 	if got := updated.(Model).currentUser; got != "octocat" {
 		t.Fatalf("currentUser = %q, want octocat", got)
 	}
@@ -1040,7 +1040,7 @@ func TestCurrentUserMsgReappliesActiveFilter(t *testing.T) {
 	if len(m.filtered) != 0 {
 		t.Fatalf("precondition: want 0 filtered before login resolves, got %d", len(m.filtered))
 	}
-	updated, _ := m.Update(currentUserMsg("octocat"))
+	updated, _ := m.Update(currentUserMsg{login: "octocat"})
 	if got := prNumbers(updated.(Model)); !slices.Equal(got, []int{1}) {
 		t.Fatalf("filtered = %v, want [1] after login resolves", got)
 	}
@@ -1056,7 +1056,7 @@ func TestCurrentUserMsgSkipsRecomputeWhenFilterNotUserDependent(t *testing.T) {
 	if m.viewport.AtTop() {
 		t.Fatal("precondition: expected viewport scrolled away from top")
 	}
-	updated, _ := m.Update(currentUserMsg("octocat"))
+	updated, _ := m.Update(currentUserMsg{login: "octocat"})
 	um := updated.(Model)
 	if um.currentUser != "octocat" {
 		t.Fatalf("currentUser = %q, want octocat (login still stored)", um.currentUser)
@@ -1068,7 +1068,7 @@ func TestCurrentUserMsgSkipsRecomputeWhenFilterNotUserDependent(t *testing.T) {
 
 func TestCurrentUserMsgTargetView(t *testing.T) {
 	t.Parallel()
-	if currentUserMsg("x").TargetView() != screen.ViewPR {
+	if (currentUserMsg{login: "x"}).TargetView() != screen.ViewPR {
 		t.Fatal("currentUserMsg must target the PR view")
 	}
 }
@@ -1100,8 +1100,8 @@ func TestCurrentUserCmdReturnsLogin(t *testing.T) {
 	if !ok {
 		t.Fatalf("got %T, want currentUserMsg", msg)
 	}
-	if string(cu) != "octocat" {
-		t.Fatalf("login = %q, want octocat", string(cu))
+	if cu.login != "octocat" {
+		t.Fatalf("login = %q, want octocat", cu.login)
 	}
 }
 
@@ -1113,8 +1113,8 @@ func TestCurrentUserCmdEmptyOnError(t *testing.T) {
 	if !ok {
 		t.Fatalf("got %T, want currentUserMsg", msg)
 	}
-	if string(cu) != "" {
-		t.Fatalf("login = %q, want empty on error", string(cu))
+	if cu.login != "" {
+		t.Fatalf("login = %q, want empty on error", cu.login)
 	}
 }
 
@@ -1873,7 +1873,7 @@ func TestPRDataDispatchesChecksFetch(t *testing.T) {
 	t.Parallel()
 	m := New(fakeBackend{checks: map[int]ghClient.CheckStatus{1: ghClient.CheckPassing}}, "octocat", "hello", 100, 40, 0)
 	prs := []ghClient.PullRequest{{Number: 1, Title: "one", State: "open"}}
-	_, cmd := m.Update(prDataMsg(ghClient.RepoContext{Owner: "octocat", Name: "hello", PRs: prs}))
+	_, cmd := m.Update(prDataMsg{ctx: ghClient.RepoContext{Owner: "octocat", Name: "hello", PRs: prs}})
 	found := slices.ContainsFunc(drainCmd(cmd), func(msg tea.Msg) bool {
 		_, ok := msg.(prChecksMsg)
 		return ok
@@ -2086,5 +2086,25 @@ func TestFilterOnFilesChangedTabTriggersDiffFetch(t *testing.T) {
 	}
 	if um.diffs[2].status != diffLoading {
 		t.Fatalf("diffs[2].status = %d, want diffLoading", um.diffs[2].status)
+	}
+}
+
+func TestAsyncMessagesCarryGeneration(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{prs: []ghClient.PullRequest{{Number: 1}}}, "o", "n", 100, 40, 7)
+	msg := m.fetchPRsCmd("o", "n", false)()
+	d, ok := msg.(prDataMsg)
+	if !ok {
+		t.Fatalf("got %T, want prDataMsg", msg)
+	}
+	if d.Generation() != 7 {
+		t.Fatalf("Generation() = %d, want 7", d.Generation())
+	}
+}
+
+func TestStatusMsgTargetView(t *testing.T) {
+	t.Parallel()
+	if (statusMsg{}).TargetView() != screen.ViewPR {
+		t.Fatal("statusMsg must target the PR view")
 	}
 }
