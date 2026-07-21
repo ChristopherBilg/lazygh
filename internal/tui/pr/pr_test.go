@@ -2089,16 +2089,74 @@ func TestFilterOnFilesChangedTabTriggersDiffFetch(t *testing.T) {
 	}
 }
 
-func TestAsyncMessagesCarryGeneration(t *testing.T) {
+// TestAsyncProducersStampGeneration asserts every async producer command stamps
+// its result message with the model generation, so the router's stale-drop guard
+// (issue #46) applies uniformly. Covers success and error branches; each returned
+// message must implement screen.Generational and report the model's generation.
+func TestAsyncProducersStampGeneration(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{prs: []ghClient.PullRequest{{Number: 1}}}, "o", "n", 100, 40, 7)
-	msg := m.fetchPRsCmd("o", "n", false)()
-	d, ok := msg.(prDataMsg)
-	if !ok {
-		t.Fatalf("got %T, want prDataMsg", msg)
+	const gen uint64 = 7
+
+	okBackend := fakeBackend{
+		prs:         []ghClient.PullRequest{{Number: 1}},
+		currentUser: "octocat",
+		comments:    []ghClient.PRComment{comment("alice", "hi")},
+		diff:        "diff",
+		checks:      map[int]ghClient.CheckStatus{1: ghClient.CheckPassing},
 	}
-	if d.Generation() != 7 {
-		t.Fatalf("Generation() = %d, want 7", d.Generation())
+	errBackend := fakeBackend{
+		prsErr:         errors.New("boom"),
+		currentUserErr: errors.New("boom"),
+		checkoutErr:    errors.New("boom"),
+		openErr:        errors.New("boom"),
+		approveErr:     errors.New("boom"),
+		mergeErr:       errors.New("boom"),
+		closeErr:       errors.New("boom"),
+		commentsErr:    errors.New("boom"),
+		diffErr:        errors.New("boom"),
+		checksErr:      errors.New("boom"),
+	}
+	notLocalBackend := fakeBackend{checkoutErr: ghClient.ErrNotLocalRepo}
+
+	tests := []struct {
+		name    string
+		backend fakeBackend
+		cmd     func(m Model) tea.Cmd
+	}{
+		{"fetchPRs/ok", okBackend, func(m Model) tea.Cmd { return m.fetchPRsCmd("o", "n", false) }},
+		{"fetchPRs/err", errBackend, func(m Model) tea.Cmd { return m.fetchPRsCmd("o", "n", false) }},
+		{"currentUser/ok", okBackend, func(m Model) tea.Cmd { return m.currentUserCmd() }},
+		{"currentUser/err", errBackend, func(m Model) tea.Cmd { return m.currentUserCmd() }},
+		{"checkout/ok", okBackend, func(m Model) tea.Cmd { return m.checkoutCmd("o", "n", 1) }},
+		{"checkout/failed", errBackend, func(m Model) tea.Cmd { return m.checkoutCmd("o", "n", 1) }},
+		{"checkout/unavailable", notLocalBackend, func(m Model) tea.Cmd { return m.checkoutCmd("o", "n", 1) }},
+		{"openBrowser/ok", okBackend, func(m Model) tea.Cmd { return m.openBrowserCmd("o", "n", 1) }},
+		{"openBrowser/err", errBackend, func(m Model) tea.Cmd { return m.openBrowserCmd("o", "n", 1) }},
+		{"approve/ok", okBackend, func(m Model) tea.Cmd { return m.approveCmd("o", "n", 1) }},
+		{"approve/err", errBackend, func(m Model) tea.Cmd { return m.approveCmd("o", "n", 1) }},
+		{"merge/ok", okBackend, func(m Model) tea.Cmd { return m.mergeCmd("o", "n", 1) }},
+		{"merge/err", errBackend, func(m Model) tea.Cmd { return m.mergeCmd("o", "n", 1) }},
+		{"close/ok", okBackend, func(m Model) tea.Cmd { return m.closeCmd("o", "n", 1) }},
+		{"close/err", errBackend, func(m Model) tea.Cmd { return m.closeCmd("o", "n", 1) }},
+		{"fetchComments/ok", okBackend, func(m Model) tea.Cmd { return m.fetchCommentsCmd(1) }},
+		{"fetchComments/err", errBackend, func(m Model) tea.Cmd { return m.fetchCommentsCmd(1) }},
+		{"fetchDiff/ok", okBackend, func(m Model) tea.Cmd { return m.fetchDiffCmd(1) }},
+		{"fetchDiff/err", errBackend, func(m Model) tea.Cmd { return m.fetchDiffCmd(1) }},
+		{"fetchChecks/ok", okBackend, func(m Model) tea.Cmd { return m.fetchChecksCmd("o", "n") }},
+		{"fetchChecks/err", errBackend, func(m Model) tea.Cmd { return m.fetchChecksCmd("o", "n") }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := New(tt.backend, "o", "n", 100, 40, gen)
+			msg := tt.cmd(m)()
+			g, ok := msg.(screen.Generational)
+			if !ok {
+				t.Fatalf("%s: %T does not implement screen.Generational", tt.name, msg)
+			}
+			if g.Generation() != gen {
+				t.Fatalf("%s: Generation() = %d, want %d", tt.name, g.Generation(), gen)
+			}
+		})
 	}
 }
 
