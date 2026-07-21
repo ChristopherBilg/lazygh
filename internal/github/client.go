@@ -160,6 +160,34 @@ func (c *Client) newRESTClient() (*api.RESTClient, error) {
 	return client, nil
 }
 
+// maxPages caps how many pages a single paginated fetch will request, so an
+// unusually large account or repository cannot drive unbounded paging. Hitting the
+// cap is WARN-logged; results may be truncated in that (rare) case.
+const maxPages = 20
+
+// paginate fetches successive pages via fetchPage until a page returns fewer than
+// perPage items (the last page) or maxPages is reached, concatenating results in
+// fetch order. fetchPage receives the 1-based page number and performs one request;
+// each such request is bounded by the REST client's per-request timeout, and
+// maxPages bounds the total request count. An error from any page aborts paging and
+// is returned with no partial result.
+func paginate[T any](ctx context.Context, perPage int, fetchPage func(ctx context.Context, page int) ([]T, error)) ([]T, error) {
+	var all []T
+	for page := 1; page <= maxPages; page++ {
+		items, err := fetchPage(ctx, page)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, items...)
+		if len(items) < perPage {
+			return all, nil
+		}
+	}
+	slog.Warn("pagination hit max-pages cap; results may be truncated",
+		"maxPages", maxPages, "perPage", perPage, "fetched", len(all))
+	return all, nil
+}
+
 // reposEndpoint builds the repo-picker REST path; sort=pushed surfaces the most
 // recently active repos first.
 func reposEndpoint(pageSize int) string {

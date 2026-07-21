@@ -670,3 +670,120 @@ func TestPRDiffMemoizes(t *testing.T) {
 		t.Errorf("exec called %d times after force, want 2 (force bypasses cache)", calls)
 	}
 }
+
+func TestPaginateStopsOnShortPage(t *testing.T) {
+	t.Parallel()
+	// per_page=3: a full first page (3 items) then a short page (2) stops paging.
+	pages := [][]int{{1, 2, 3}, {4, 5}}
+	calls := 0
+	got, err := paginate(t.Context(), 3, func(_ context.Context, page int) ([]int, error) {
+		calls++
+		return pages[page-1], nil
+	})
+	if err != nil {
+		t.Fatalf("paginate: %v", err)
+	}
+	if want := []int{1, 2, 3, 4, 5}; !slices.Equal(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	if calls != 2 {
+		t.Fatalf("calls = %d, want 2", calls)
+	}
+}
+
+func TestPaginateExactMultipleStopsOnEmptyPage(t *testing.T) {
+	t.Parallel()
+	// per_page=2 with an exact-multiple total: two full pages then an empty page
+	// (len 0 < 2) stops paging — one extra request, as documented.
+	pages := [][]int{{1, 2}, {3, 4}, {}}
+	calls := 0
+	got, err := paginate(t.Context(), 2, func(_ context.Context, page int) ([]int, error) {
+		calls++
+		return pages[page-1], nil
+	})
+	if err != nil {
+		t.Fatalf("paginate: %v", err)
+	}
+	if want := []int{1, 2, 3, 4}; !slices.Equal(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	if calls != 3 {
+		t.Fatalf("calls = %d, want 3 (one extra empty request)", calls)
+	}
+}
+
+func TestPaginateSingleShortPage(t *testing.T) {
+	t.Parallel()
+	calls := 0
+	got, err := paginate(t.Context(), 100, func(_ context.Context, _ int) ([]int, error) {
+		calls++
+		return []int{1, 2}, nil
+	})
+	if err != nil {
+		t.Fatalf("paginate: %v", err)
+	}
+	if want := []int{1, 2}; !slices.Equal(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1", calls)
+	}
+}
+
+func TestPaginateReturnsErrorFromFirstPage(t *testing.T) {
+	t.Parallel()
+	wantErr := errors.New("boom")
+	_, err := paginate(t.Context(), 10, func(_ context.Context, _ int) ([]int, error) {
+		return nil, wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("err = %v, want %v", err, wantErr)
+	}
+}
+
+func TestPaginateReturnsErrorFromLaterPage(t *testing.T) {
+	t.Parallel()
+	wantErr := errors.New("boom on page 2")
+	calls := 0
+	_, err := paginate(t.Context(), 2, func(_ context.Context, page int) ([]int, error) {
+		calls++
+		if page == 1 {
+			return []int{1, 2}, nil // full page => keep paging
+		}
+		return nil, wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("err = %v, want %v", err, wantErr)
+	}
+	if calls != 2 {
+		t.Fatalf("calls = %d, want 2", calls)
+	}
+}
+
+func TestPaginateHitsMaxPagesCapAndWarns(t *testing.T) {
+	// No t.Parallel: slog.SetDefault mutates the process-wide default logger.
+	origLogger := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(origLogger) })
+	var buf bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	calls := 0
+	// per_page=1 with every page full (1 item) never short-circuits, so paging runs
+	// until the maxPages cap.
+	got, err := paginate(t.Context(), 1, func(_ context.Context, _ int) ([]int, error) {
+		calls++
+		return []int{0}, nil
+	})
+	if err != nil {
+		t.Fatalf("paginate: %v", err)
+	}
+	if calls != maxPages {
+		t.Fatalf("calls = %d, want %d (max-pages cap)", calls, maxPages)
+	}
+	if len(got) != maxPages {
+		t.Fatalf("len(got) = %d, want %d", len(got), maxPages)
+	}
+	if out := buf.String(); !strings.Contains(out, "level=WARN") || !strings.Contains(out, "max-pages cap") {
+		t.Fatalf("expected a WARN 'max-pages cap' log; got: %s", out)
+	}
+}
