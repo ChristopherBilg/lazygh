@@ -379,3 +379,16 @@ func TestGlobalKeysWorkWhenNotCapturing(t *testing.T) {
 		t.Fatal("expected '2' to switch to Issues when not capturing")
 	}
 }
+
+func TestRepoSelectionIncrementsGeneration(t *testing.T) {
+	t.Parallel()
+	m := newTestModel()
+	s1, _ := m.Update(repolist.RepoSelectedMsg{Owner: "o", Name: "n"})
+	if g := s1.(Model).generation; g != 1 {
+		t.Fatalf("generation = %d, want 1 after first selection", g)
+	}
+	s2, _ := s1.(Model).Update(repolist.RepoSelectedMsg{Owner: "o2", Name: "n2"})
+	if g := s2.(Model).generation; g != 2 {
+		t.Fatalf("generation = %d, want 2 after second selection", g)
+	}
+}

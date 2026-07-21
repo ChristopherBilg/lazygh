@@ -81,7 +81,7 @@ func comment(login, body string) ghClient.PRComment {
 
 // withPRs builds a loaded PR screen with n synthetic pull requests.
 func withPRs(n int) Model {
-	m := New(fakeBackend{}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40, 0)
 	m.loading = false
 	prs := make([]ghClient.PullRequest, n)
 	for i := range prs {
@@ -95,7 +95,7 @@ func withPRs(n int) Model {
 // withTitledPRs builds a loaded PR screen with one PR per given title (numbered
 // from 1), so search/ranking behavior can be asserted.
 func withTitledPRs(titles ...string) Model {
-	m := New(fakeBackend{}, "octocat", "hello", 120, 40)
+	m := New(fakeBackend{}, "octocat", "hello", 120, 40, 0)
 	m.loading = false
 	prs := make([]ghClient.PullRequest, len(titles))
 	for i, title := range titles {
@@ -203,7 +203,7 @@ func TestCheckoutEmptyListNoOp(t *testing.T) {
 
 func TestPRDataMsgPopulates(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40, 0)
 	ctx := ghClient.RepoContext{
 		Owner: "octocat",
 		Name:  "hello",
@@ -235,7 +235,7 @@ func TestViewRendersTabBar(t *testing.T) {
 
 func TestLoadingViewRendersTabBar(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{}, "octocat", "hello", 100, 40) // loading == true
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40, 0) // loading == true
 	v := m.View()
 	for _, label := range []string{"Pull Requests", "Issues", "Actions"} {
 		if !strings.Contains(v, label) {
@@ -353,7 +353,7 @@ func TestPRDataMsgClearsFetchErr(t *testing.T) {
 
 func TestFetchErrMsgWithNoDataShowsError(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{}, "octocat", "hello", 100, 40) // loading, no PRs
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40, 0) // loading, no PRs
 	updated, _ := m.Update(screen.FetchErrMsg{View: screen.ViewPR, Err: errors.New("boom")})
 	um := updated.(Model)
 	if um.loading {
@@ -400,7 +400,7 @@ func TestSpinnerTickIgnoredWhenIdle(t *testing.T) {
 
 func TestSpinnerTickContinuesWhileFetching(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{}, "octocat", "hello", 100, 40) // loading == true
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40, 0) // loading == true
 	_, cmd := m.Update(spinner.TickMsg{})
 	if cmd == nil {
 		t.Fatal("expected the tick loop to continue while loading")
@@ -432,7 +432,7 @@ func TestStatusMessageShownInFooter(t *testing.T) {
 
 func TestCheckoutCmdUnavailableMessage(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{checkoutErr: ghClient.ErrNotLocalRepo}, "octocat", "other", 100, 40)
+	m := New(fakeBackend{checkoutErr: ghClient.ErrNotLocalRepo}, "octocat", "other", 100, 40, 0)
 	msg := m.checkoutCmd("octocat", "other", 42)()
 	status, ok := msg.(statusMsg)
 	if !ok {
@@ -445,7 +445,7 @@ func TestCheckoutCmdUnavailableMessage(t *testing.T) {
 
 func TestCheckoutCmdSuccessMessage(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40, 0)
 	msg := m.checkoutCmd("octocat", "hello", 7)()
 	status, ok := msg.(statusMsg)
 	if !ok {
@@ -458,7 +458,7 @@ func TestCheckoutCmdSuccessMessage(t *testing.T) {
 
 func TestCheckoutCmdFailureMessage(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{checkoutErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{checkoutErr: errors.New("boom")}, "octocat", "hello", 100, 40, 0)
 	msg := m.checkoutCmd("octocat", "hello", 7)()
 	status, ok := msg.(statusMsg)
 	if !ok {
@@ -471,7 +471,7 @@ func TestCheckoutCmdFailureMessage(t *testing.T) {
 
 func TestOpenBrowserCmdSuccessMessage(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40, 0)
 	msg := m.openBrowserCmd("octocat", "hello", 9)()
 	status, ok := msg.(statusMsg)
 	if !ok {
@@ -484,7 +484,7 @@ func TestOpenBrowserCmdSuccessMessage(t *testing.T) {
 
 func TestOpenBrowserCmdFailureMessage(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{openErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{openErr: errors.New("boom")}, "octocat", "hello", 100, 40, 0)
 	msg := m.openBrowserCmd("octocat", "hello", 9)()
 	status, ok := msg.(statusMsg)
 	if !ok {
@@ -498,7 +498,7 @@ func TestOpenBrowserCmdFailureMessage(t *testing.T) {
 func TestFetchPRsCmdSuccessReturnsData(t *testing.T) {
 	t.Parallel()
 	prs := []ghClient.PullRequest{{Number: 1, Title: "T", State: "open"}}
-	m := New(fakeBackend{prs: prs}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{prs: prs}, "octocat", "hello", 100, 40, 0)
 	msg := m.fetchPRsCmd("octocat", "hello", false)()
 	data, ok := msg.(prDataMsg)
 	if !ok {
@@ -511,7 +511,7 @@ func TestFetchPRsCmdSuccessReturnsData(t *testing.T) {
 
 func TestFetchPRsCmdClientInitErrorIsFatal(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{prsErr: ghClient.ErrClientInit}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{prsErr: ghClient.ErrClientInit}, "octocat", "hello", 100, 40, 0)
 	msg := m.fetchPRsCmd("octocat", "hello", false)()
 	errMsg, ok := msg.(screen.ErrMsg)
 	if !ok {
@@ -524,7 +524,7 @@ func TestFetchPRsCmdClientInitErrorIsFatal(t *testing.T) {
 
 func TestFetchPRsCmdOtherErrorIsRecoverable(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{prsErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{prsErr: errors.New("boom")}, "octocat", "hello", 100, 40, 0)
 	msg := m.fetchPRsCmd("octocat", "hello", false)()
 	fetchErr, ok := msg.(screen.FetchErrMsg)
 	if !ok {
@@ -537,7 +537,7 @@ func TestFetchPRsCmdOtherErrorIsRecoverable(t *testing.T) {
 
 func TestFetchCommentsCmdSuccess(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{comments: []ghClient.PRComment{comment("alice", "hi")}}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{comments: []ghClient.PRComment{comment("alice", "hi")}}, "octocat", "hello", 100, 40, 0)
 	msg := m.fetchCommentsCmd(7)()
 	got, ok := msg.(prCommentsMsg)
 	if !ok {
@@ -550,7 +550,7 @@ func TestFetchCommentsCmdSuccess(t *testing.T) {
 
 func TestFetchCommentsCmdClientInitFatal(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{commentsErr: ghClient.ErrClientInit}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{commentsErr: ghClient.ErrClientInit}, "octocat", "hello", 100, 40, 0)
 	if _, ok := m.fetchCommentsCmd(7)().(screen.ErrMsg); !ok {
 		t.Fatalf("expected screen.ErrMsg for ErrClientInit")
 	}
@@ -558,7 +558,7 @@ func TestFetchCommentsCmdClientInitFatal(t *testing.T) {
 
 func TestFetchCommentsCmdOtherError(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{commentsErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{commentsErr: errors.New("boom")}, "octocat", "hello", 100, 40, 0)
 	got, ok := m.fetchCommentsCmd(7)().(prCommentsErrMsg)
 	if !ok {
 		t.Fatalf("expected prCommentsErrMsg, got non-error message")
@@ -681,7 +681,7 @@ func TestSlashIgnoredWhenDetailFocused(t *testing.T) {
 
 func TestSlashIgnoredWhileLoading(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{}, "octocat", "hello", 100, 40) // loading == true, no PRs
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40, 0) // loading == true, no PRs
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
 	if updated.(Model).searching {
 		t.Fatal("'/' must not start search while the loading screen is shown")
@@ -690,7 +690,7 @@ func TestSlashIgnoredWhileLoading(t *testing.T) {
 
 func TestSlashIgnoredOnFatalErrorScreen(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40, 0)
 	fe, _ := m.Update(screen.FetchErrMsg{View: screen.ViewPR, Err: errors.New("boom")})
 	m = fe.(Model) // fatal error screen: loading cleared, fetchErr set, no PRs
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
@@ -1075,7 +1075,7 @@ func TestCurrentUserMsgTargetView(t *testing.T) {
 
 func TestInitEmitsCurrentUserCmd(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{currentUser: "octocat"}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{currentUser: "octocat"}, "octocat", "hello", 100, 40, 0)
 	msg := m.Init()()
 	batch, ok := msg.(tea.BatchMsg)
 	if !ok {
@@ -1094,7 +1094,7 @@ func TestInitEmitsCurrentUserCmd(t *testing.T) {
 
 func TestCurrentUserCmdReturnsLogin(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{currentUser: "octocat"}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{currentUser: "octocat"}, "octocat", "hello", 100, 40, 0)
 	msg := m.currentUserCmd()()
 	cu, ok := msg.(currentUserMsg)
 	if !ok {
@@ -1107,7 +1107,7 @@ func TestCurrentUserCmdReturnsLogin(t *testing.T) {
 
 func TestCurrentUserCmdEmptyOnError(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{currentUserErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{currentUserErr: errors.New("boom")}, "octocat", "hello", 100, 40, 0)
 	msg := m.currentUserCmd()()
 	cu, ok := msg.(currentUserMsg)
 	if !ok {
@@ -1122,7 +1122,7 @@ func TestCurrentUserCmdEmptyOnError(t *testing.T) {
 // are not truncated in the narrow left pane) with the given PRs and current user,
 // then recomputes.
 func withWideFilteredPRs(currentUser string, prs ...ghClient.PullRequest) Model {
-	m := New(fakeBackend{}, "octocat", "hello", 300, 40)
+	m := New(fakeBackend{}, "octocat", "hello", 300, 40, 0)
 	m.loading = false
 	m.currentUser = currentUser
 	m.ctx.PRs = prs
@@ -1188,7 +1188,7 @@ func TestFilterKeyResetsCursor(t *testing.T) {
 
 func TestFilterKeyIgnoredWhileLoading(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{}, "octocat", "hello", 100, 40) // loading == true
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40, 0) // loading == true
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
 	if updated.(Model).filter != filterAll {
 		t.Fatal("filter must not change while loading")
@@ -1277,7 +1277,7 @@ func TestFilterReviewKeyApplies(t *testing.T) {
 
 func TestFilterKeyIgnoredOnFatalErrorScreen(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40, 0)
 	fe, _ := m.Update(screen.FetchErrMsg{View: screen.ViewPR, Err: errors.New("boom")})
 	m = fe.(Model) // fatal error screen: loading cleared, fetchErr set, no PRs
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
@@ -1567,7 +1567,7 @@ func TestApproveEmptyListNoOp(t *testing.T) {
 
 func TestApproveCmdSuccess(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40, 0)
 	msg := m.approveCmd("octocat", "hello", 7)()
 	res, ok := msg.(actionResultMsg)
 	if !ok {
@@ -1580,7 +1580,7 @@ func TestApproveCmdSuccess(t *testing.T) {
 
 func TestApproveCmdFailure(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{approveErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{approveErr: errors.New("boom")}, "octocat", "hello", 100, 40, 0)
 	msg := m.approveCmd("octocat", "hello", 7)()
 	res, ok := msg.(actionResultMsg)
 	if !ok {
@@ -1705,11 +1705,11 @@ func TestConfirmCancelKeys(t *testing.T) {
 
 func TestMergeCmdSuccessAndFailure(t *testing.T) {
 	t.Parallel()
-	ok := New(fakeBackend{}, "octocat", "hello", 100, 40).mergeCmd("octocat", "hello", 7)()
+	ok := New(fakeBackend{}, "octocat", "hello", 100, 40, 0).mergeCmd("octocat", "hello", 7)()
 	if r, _ := ok.(actionResultMsg); !r.ok || !strings.Contains(r.text, "Merged PR #7") {
 		t.Fatalf("success = %+v, want ok mentioning PR #7", ok)
 	}
-	bad := New(fakeBackend{mergeErr: errors.New("boom")}, "octocat", "hello", 100, 40).mergeCmd("octocat", "hello", 7)()
+	bad := New(fakeBackend{mergeErr: errors.New("boom")}, "octocat", "hello", 100, 40, 0).mergeCmd("octocat", "hello", 7)()
 	if r, _ := bad.(actionResultMsg); r.ok || !strings.Contains(r.text, "boom") {
 		t.Fatalf("failure = %+v, want failure mentioning boom", bad)
 	}
@@ -1717,11 +1717,11 @@ func TestMergeCmdSuccessAndFailure(t *testing.T) {
 
 func TestCloseCmdSuccessAndFailure(t *testing.T) {
 	t.Parallel()
-	ok := New(fakeBackend{}, "octocat", "hello", 100, 40).closeCmd("octocat", "hello", 7)()
+	ok := New(fakeBackend{}, "octocat", "hello", 100, 40, 0).closeCmd("octocat", "hello", 7)()
 	if r, _ := ok.(actionResultMsg); !r.ok || !strings.Contains(r.text, "Closed PR #7") {
 		t.Fatalf("success = %+v, want ok mentioning PR #7", ok)
 	}
-	bad := New(fakeBackend{closeErr: errors.New("boom")}, "octocat", "hello", 100, 40).closeCmd("octocat", "hello", 7)()
+	bad := New(fakeBackend{closeErr: errors.New("boom")}, "octocat", "hello", 100, 40, 0).closeCmd("octocat", "hello", 7)()
 	if r, _ := bad.(actionResultMsg); r.ok || !strings.Contains(r.text, "boom") {
 		t.Fatalf("failure = %+v, want failure mentioning boom", bad)
 	}
@@ -1850,7 +1850,7 @@ func TestPRChecksErrLeavesScreenHealthy(t *testing.T) {
 
 func TestFetchChecksCmdSuccess(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{checks: map[int]ghClient.CheckStatus{7: ghClient.CheckPassing}}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{checks: map[int]ghClient.CheckStatus{7: ghClient.CheckPassing}}, "octocat", "hello", 100, 40, 0)
 	msg := m.fetchChecksCmd("octocat", "hello")()
 	cm, ok := msg.(prChecksMsg)
 	if !ok {
@@ -1863,7 +1863,7 @@ func TestFetchChecksCmdSuccess(t *testing.T) {
 
 func TestFetchChecksCmdError(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{checksErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{checksErr: errors.New("boom")}, "octocat", "hello", 100, 40, 0)
 	if _, ok := m.fetchChecksCmd("octocat", "hello")().(prChecksErrMsg); !ok {
 		t.Fatal("expected prChecksErrMsg on backend error")
 	}
@@ -1871,7 +1871,7 @@ func TestFetchChecksCmdError(t *testing.T) {
 
 func TestPRDataDispatchesChecksFetch(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{checks: map[int]ghClient.CheckStatus{1: ghClient.CheckPassing}}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{checks: map[int]ghClient.CheckStatus{1: ghClient.CheckPassing}}, "octocat", "hello", 100, 40, 0)
 	prs := []ghClient.PullRequest{{Number: 1, Title: "one", State: "open"}}
 	_, cmd := m.Update(prDataMsg(ghClient.RepoContext{Owner: "octocat", Name: "hello", PRs: prs}))
 	found := slices.ContainsFunc(drainCmd(cmd), func(msg tea.Msg) bool {
@@ -1885,7 +1885,7 @@ func TestPRDataDispatchesChecksFetch(t *testing.T) {
 
 func TestFetchDiffCmdSuccessHighlights(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{diff: "diff --git a/x b/x\n@@ -0,0 +1 @@\n+added\n"}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{diff: "diff --git a/x b/x\n@@ -0,0 +1 @@\n+added\n"}, "octocat", "hello", 100, 40, 0)
 	got, ok := m.fetchDiffCmd(7)().(prDiffMsg)
 	if !ok {
 		t.Fatal("expected prDiffMsg")
@@ -1900,7 +1900,7 @@ func TestFetchDiffCmdSuccessHighlights(t *testing.T) {
 
 func TestFetchDiffCmdEmptyDiff(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{diff: "   \n"}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{diff: "   \n"}, "octocat", "hello", 100, 40, 0)
 	got, ok := m.fetchDiffCmd(7)().(prDiffMsg)
 	if !ok {
 		t.Fatal("expected prDiffMsg")
@@ -1912,7 +1912,7 @@ func TestFetchDiffCmdEmptyDiff(t *testing.T) {
 
 func TestFetchDiffCmdError(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{diffErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{diffErr: errors.New("boom")}, "octocat", "hello", 100, 40, 0)
 	got, ok := m.fetchDiffCmd(7)().(prDiffErrMsg)
 	if !ok {
 		t.Fatal("expected prDiffErrMsg")

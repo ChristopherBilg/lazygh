@@ -126,6 +126,7 @@ type Backend interface {
 // Model is the pull-request split-pane screen.
 type Model struct {
 	backend     Backend
+	gen         uint64 // model generation; stamped onto every async message so the router can drop stale results (issue #46)
 	ctx         ghClient.RepoContext
 	cursor      int
 	focus       focus
@@ -155,7 +156,7 @@ type Model struct {
 // New returns a PR screen for the given repository, sized to the current window,
 // backed by the given github client. The repository owner/name are stored
 // immediately so the loading view can show the repository name.
-func New(backend Backend, owner, name string, width, height int) Model {
+func New(backend Backend, owner, name string, width, height int, gen uint64) Model {
 	ti := textinput.New()
 	ti.Prompt = "/ "
 	ti.Placeholder = "filter titles"
@@ -163,6 +164,7 @@ func New(backend Backend, owner, name string, width, height int) Model {
 
 	m := Model{
 		backend:  backend,
+		gen:      gen,
 		ctx:      ghClient.RepoContext{Owner: owner, Name: name},
 		focus:    focusList,
 		loading:  true,

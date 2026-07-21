@@ -54,9 +54,13 @@ type Model struct {
 	// place via map-reference semantics; do not clone Model and expect
 	// independent per-repo state.
 	perRepo map[view]screen.Model
-	err     error // sticky: once set, the overlay shows until quit
-	width   int
-	height  int
+	// generation counts repo selections. It stamps each per-repo model (via
+	// pr.New) so the router can drop async results addressed to a model that has
+	// since been rebuilt for a different repo (issue #46).
+	generation uint64
+	err        error // sticky: once set, the overlay shows until quit
+	width      int
+	height     int
 }
 
 var _ tea.Model = Model{}
@@ -128,8 +132,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.broadcastResize(msg)
 
 	case repolist.RepoSelectedMsg:
+		m.generation++
 		m.perRepo = map[view]screen.Model{
-			viewPR:      pr.New(m.client, msg.Owner, msg.Name, m.width, m.height),
+			viewPR:      pr.New(m.client, msg.Owner, msg.Name, m.width, m.height, m.generation),
 			viewIssues:  issue.New(m.width, m.height),
 			viewActions: action.New(m.width, m.height),
 		}
