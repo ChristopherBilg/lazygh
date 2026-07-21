@@ -120,6 +120,7 @@ type Backend interface {
 	PRComments(ctx context.Context, owner, name string, prNumber int, force bool) ([]ghClient.PRComment, error)
 	PRDiff(ctx context.Context, owner, name string, prNumber int, force bool) (string, error)
 	CurrentUser(ctx context.Context) (string, error)
+	RepoPRChecks(ctx context.Context, owner, name string) (map[int]ghClient.CheckStatus, error)
 }
 
 // Model is the pull-request split-pane screen.
@@ -145,9 +146,10 @@ type Model struct {
 	width       int
 	height      int
 	ready       bool
-	comments    map[int]commentState // per-PR comment load state, keyed by PR number
-	diffs       map[int]diffState    // per-PR diff load state, keyed by PR number
-	activeTab   tabs.Tab             // selected right-pane tab; persists across PR changes
+	comments    map[int]commentState         // per-PR comment load state, keyed by PR number
+	checks      map[int]ghClient.CheckStatus // per-PR aggregate check status, keyed by PR number
+	diffs       map[int]diffState            // per-PR diff load state, keyed by PR number
+	activeTab   tabs.Tab                     // selected right-pane tab; persists across PR changes
 }
 
 // New returns a PR screen for the given repository, sized to the current window,
@@ -603,6 +605,33 @@ func (m Model) currentUserCmd() tea.Cmd {
 	}
 }
 
+// prChecksMsg carries the freshly fetched per-PR aggregate check statuses.
+type prChecksMsg struct{ checks map[int]ghClient.CheckStatus }
+
+// TargetView addresses fetched check statuses to the pull-request screen so they are
+// delivered even after a mid-fetch tab switch.
+func (prChecksMsg) TargetView() screen.ViewID { return screen.ViewPR }
+
+// prChecksErrMsg reports a failed check-status fetch; indicators are left neutral.
+type prChecksErrMsg struct{ err error }
+
+// TargetView addresses the check-fetch error to the pull-request screen.
+func (prChecksErrMsg) TargetView() screen.ViewID { return screen.ViewPR }
+
+// fetchChecksCmd fetches every open PR's aggregate check status in the background.
+// RepoPRChecks already logs the cause on failure; the handler leaves indicators
+// neutral. The fetch is non-blocking so the list renders before statuses arrive.
+func (m Model) fetchChecksCmd(owner, name string) tea.Cmd {
+	return func() tea.Msg {
+		// context.Background() for now; a program-scoped context is future work.
+		checks, err := m.backend.RepoPRChecks(context.Background(), owner, name)
+		if err != nil {
+			return prChecksErrMsg{err: err}
+		}
+		return prChecksMsg{checks: checks}
+	}
+}
+
 // Init starts fetching pull requests (from cache when available), resolving
 // the current user, and the spinner.
 func (m Model) Init() tea.Cmd {
@@ -733,6 +762,7 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		m.refreshing = false
 		m.fetchErr = nil
 		m.recompute() // re-apply the active query to the new data and clamp the cursor
+		cmds = append(cmds, m.fetchChecksCmd(m.ctx.Owner, m.ctx.Name))
 		if cmd := m.maybeFetchActiveTab(); cmd != nil {
 			m.updateViewportContent() // reflect the loading placeholder
 			cmds = append(cmds, cmd)
@@ -770,6 +800,17 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		if pr, ok := m.selectedPR(); ok && pr.Number == msg.prNumber {
 			m.updateViewportContent()
 		}
+
+	case prChecksMsg:
+		m.checks = msg.checks // the next View() frame renders the icons
+
+	case prChecksErrMsg:
+		// Non-fatal: keep the last-known statuses rather than clearing them, so a
+		// transient refresh failure doesn't blank every indicator (mirrors how the
+		// PR list keeps its rows on a failed refresh). On a first-load failure the
+		// map is still empty, so indicators render neutral. RepoPRChecks already
+		// logged the cause at Warn; note it here at Debug for TUI-side tracing.
+		slog.Debug("pr check statuses unavailable; keeping last-known indicators", "err", msg.err)
 
 	case prDiffMsg:
 		m.diffs[msg.prNumber] = diffState{status: diffLoaded, content: msg.content}
@@ -982,6 +1023,28 @@ func (m Model) emptyListMessage() string {
 	}
 }
 
+// checkIconWidth is the display columns reserved for a PR row's status cell (glyph
+// plus trailing separator), so titles start at the same column on every row
+// regardless of how the terminal sizes emoji.
+const checkIconWidth = 3
+
+// checkIcon returns s's status glyph padded with spaces to exactly checkIconWidth
+// display columns (measured with lipgloss.Width, since an emoji may render as 1 or 2
+// cells). CheckNone renders as blanks — the same width, with no misleading icon.
+func checkIcon(s ghClient.CheckStatus) string {
+	glyph := "" // CheckNone
+	switch s {
+	case ghClient.CheckPassing:
+		glyph = "✅"
+	case ghClient.CheckFailing:
+		glyph = "❌"
+	case ghClient.CheckPending:
+		glyph = "🔄"
+	}
+	pad := max(checkIconWidth-lipgloss.Width(glyph), 0)
+	return glyph + strings.Repeat(" ", pad)
+}
+
 // renderList renders the left-pane contents: an optional search input or filter
 // badge, then the filtered PR rows (or a no-results message).
 func (m Model) renderList(paneWidth int) string {
@@ -1006,14 +1069,22 @@ func (m Model) renderList(paneWidth int) string {
 	for row, idx := range m.filtered {
 		pr := m.ctx.PRs[idx]
 		cursorStr := "  "
-		// Reserve 2 columns for the cursor prefix so the title never overflows the
-		// pane. TruncateEllipsis is width-aware and never panics on narrow widths.
-		title := styles.TruncateEllipsis(fmt.Sprintf("#%d %s", pr.Number, pr.Title), paneWidth-2)
+		// Reserve 2 columns for the cursor prefix; add the fixed-width status cell only
+		// when the pane is wide enough to hold it plus some title, so the emitted row
+		// never exceeds paneWidth (a very narrow pane simply drops the icon).
+		// TruncateEllipsis is width-aware and never panics on narrow widths.
+		icon := ""
+		titleWidth := paneWidth - 2
+		if titleWidth > checkIconWidth {
+			icon = checkIcon(m.checks[pr.Number]) // missing key → CheckNone → blank cell
+			titleWidth -= checkIconWidth
+		}
+		title := styles.TruncateEllipsis(fmt.Sprintf("#%d %s", pr.Number, pr.Title), titleWidth)
 		if m.cursor == row {
 			cursorStr = "> "
 			title = styles.SelectedItem.Render(title)
 		}
-		fmt.Fprintf(&b, "%s%s\n", cursorStr, title)
+		fmt.Fprintf(&b, "%s%s%s\n", cursorStr, icon, title)
 	}
 	return b.String()
 }

@@ -19,6 +19,7 @@
 - ✅ **PR actions** — check a PR out locally (`c`) or open it in your browser (`o`)
 - ✅ **Fuzzy PR search** (`/`) — filter the pull-request list by title as you type
 - ✅ **Quick PR filters** — one keystroke to focus on **My PRs** (`m`), **Needs my Review** (`v`), or **Dependabot** (`d`); press the active key again to clear
+- ✅ **PR check status** — each PR row shows its aggregate CI/checks state (✅ passing, ❌ failing, 🔄 running, blank when none) at a glance
 - ✅ **Refresh with in-memory caching** (`r`) — switching tabs and going back never re-fetches unnecessarily
 - ✅ **Fully configurable** — remap every keybinding, recolor the theme, and tune network timeouts from one optional YAML file
 - ✅ **TUI-safe logging** — diagnostics go to a log file, never to the screen, so the interface is never corrupted
