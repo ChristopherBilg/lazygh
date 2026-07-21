@@ -249,7 +249,7 @@ const defaultConfigTemplate = `# lazygh configuration - uncomment and edit any k
 github:
   # rest_timeout: 10s        # timeout for each GitHub REST API request
   # subprocess_timeout: 30s  # timeout for each gh subprocess call
-  # repo_page_size: 50       # repositories fetched for the picker (1-100)
+  # repo_page_size: 50       # repos per page request; up to 20 pages loaded (1-100)
   # merge_method: merge      # how 'M' merges a PR: merge, squash, or rebase
 keys:
   # quit: [q]                # ctrl+c always quits too

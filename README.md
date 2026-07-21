@@ -120,7 +120,7 @@ $XDG_CONFIG_HOME/lazygh/config.yml     # or ~/.config/lazygh/config.yml
 
 On first run lazygh writes a fully-commented template there, so it's easy to find and edit. Every key is optional — uncomment one to override its default. You can configure:
 
-- **GitHub limits** — per-request REST timeout, `gh` subprocess timeout, and how many repositories the picker fetches.
+- **GitHub limits** — per-request REST timeout, `gh` subprocess timeout, and the per-page batch size for fetching your repositories (paged, up to a safety limit on very large accounts).
 - **Keybindings** — remap any action to a single key or a list of keys.
 - **Theme** — override the accent, border, selected-row, title, and error colors (hex or ANSI-256).
 
