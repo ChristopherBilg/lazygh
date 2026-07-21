@@ -157,6 +157,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Async fetch results are addressed to their originating view so they are
 	// delivered even when the user has switched to another tab mid-fetch.
 	if a, ok := msg.(screen.Addressed); ok {
+		// Stale-result guard: drop an async result addressed to a per-repo view
+		// that has been rebuilt for a different repo since the result was issued
+		// (its generation no longer matches). The repo list is persistent — never
+		// rebuilt — so its addressed results (generation 0, e.g. a repo-list fetch
+		// error) are always delivered (issue #46).
+		if g, ok := msg.(screen.Generational); ok && a.TargetView() != viewRepoList && g.Generation() != m.generation {
+			slog.Debug("dropping stale addressed message from a superseded repo selection",
+				"target", a.TargetView(), "msgGen", g.Generation(), "curGen", m.generation)
+			return m, nil
+		}
 		if fe, ok := msg.(screen.FetchErrMsg); ok {
 			slog.Warn("view fetch error", "view", fe.View, "err", fe.Err)
 		}

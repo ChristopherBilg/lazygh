@@ -392,3 +392,51 @@ func TestRepoSelectionIncrementsGeneration(t *testing.T) {
 		t.Fatalf("generation = %d, want 2 after second selection", g)
 	}
 }
+
+func TestStaleGenerationAddressedMsgDropped(t *testing.T) {
+	t.Parallel()
+	prRec := &recorderScreen{}
+	m := Model{generation: 2, active: viewPR, perRepo: map[view]screen.Model{viewPR: prRec}}
+	m.Update(screen.FetchErrMsg{GenStamp: screen.GenStamp{Gen: 1}, View: screen.ViewPR, Err: errors.New("stale")})
+	if len(prRec.got) != 0 {
+		t.Fatalf("stale message delivered: recorder got %d messages, want 0", len(prRec.got))
+	}
+}
+
+func TestCurrentGenerationAddressedMsgDelivered(t *testing.T) {
+	t.Parallel()
+	prRec := &recorderScreen{}
+	m := Model{generation: 2, active: viewPR, perRepo: map[view]screen.Model{viewPR: prRec}}
+	m.Update(screen.FetchErrMsg{GenStamp: screen.GenStamp{Gen: 2}, View: screen.ViewPR, Err: errors.New("live")})
+	if len(prRec.got) != 1 {
+		t.Fatalf("current-generation message dropped: recorder got %d messages, want 1", len(prRec.got))
+	}
+}
+
+func TestStaleAddressedMsgLoggedAtDebug(t *testing.T) {
+	// No t.Parallel: slog.SetDefault mutates the process-wide default logger.
+	orig := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(orig) })
+	var buf bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+
+	m := Model{generation: 2, active: viewPR, perRepo: map[view]screen.Model{viewPR: &recorderScreen{}}}
+	m.Update(screen.FetchErrMsg{GenStamp: screen.GenStamp{Gen: 1}, View: screen.ViewPR, Err: errors.New("stale")})
+	if out := buf.String(); !strings.Contains(out, "level=DEBUG") || !strings.Contains(out, "dropping stale addressed message") {
+		t.Fatalf("expected stale-drop debug log, got: %s", out)
+	}
+}
+
+func TestRepoListAddressedMsgNeverDroppedByGeneration(t *testing.T) {
+	t.Parallel()
+	repoRec := &recorderScreen{}
+	// The repo list is persistent (never rebuilt), so its fetch error — which
+	// carries generation 0 (repolist does not stamp) — must still be delivered
+	// even after repo selections have advanced the generation. Without the
+	// viewRepoList exemption in the guard, this message would be wrongly dropped.
+	m := Model{generation: 3, active: viewRepoList, repoList: repoRec}
+	m.Update(screen.FetchErrMsg{GenStamp: screen.GenStamp{Gen: 0}, View: screen.ViewRepoList, Err: errors.New("repo list refresh failed")})
+	if len(repoRec.got) != 1 {
+		t.Fatalf("repo-list fetch error dropped by generation guard: got %d, want 1", len(repoRec.got))
+	}
+}
