@@ -34,7 +34,7 @@ All keys are optional; any omitted key uses its default.
 |---|---|---|---|
 | `github.rest_timeout` | duration | `10s` | Timeout for each GitHub REST API request. |
 | `github.subprocess_timeout` | duration | `30s` | Timeout for each `gh` subprocess call (PR checkout, open in browser, approve, merge, close). |
-| `github.repo_page_size` | integer (1–100) | `50` | Number of repositories fetched for the repository picker. Capped at 100 by the GitHub API. |
+| `github.repo_page_size` | integer (1–100) | `50` | Repositories fetched per page request when loading the picker. The picker pages through your repositories up to a safety cap of 20 pages, so at most `20 × repo_page_size` are loaded (e.g. `1` loads at most 20; the default `50` loads up to 1000). Hitting the cap is logged. The GitHub API caps each page at 100. |
 | `github.merge_method` | enum | `merge` | How the `M` action merges a PR: `merge`, `squash`, or `rebase`. Invalid values fall back to `merge`. |
 
 Durations use Go's duration syntax — e.g. `500ms`, `10s`, `2m`, `1h` — as
@@ -123,7 +123,7 @@ theme:
 github:
   rest_timeout: 10s        # bound each REST request
   subprocess_timeout: 30s  # bound each `gh` subprocess call
-  repo_page_size: 50       # repositories fetched for the picker (1–100)
+  repo_page_size: 50       # repos per page request; up to 20 pages loaded (1–100)
 keys:
   checkout: [c, x]         # remap / add keys; single key or a list
   # ...any of: quit, back, up, down, select, refresh, toggle_pane, open, approve, merge, close, search, filter_mine, filter_review, filter_dependabot, nav_prs, nav_issues, nav_actions, prev_tab, next_tab
