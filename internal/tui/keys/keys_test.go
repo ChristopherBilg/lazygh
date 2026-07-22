@@ -142,3 +142,22 @@ func TestConfigureOverridesMerge(t *testing.T) {
 		t.Error("after remap, 'M' should no longer match Merge")
 	}
 }
+
+func TestDefaultHelpBinding(t *testing.T) {
+	if !key.Matches(runeMsg('?'), Map.Help) {
+		t.Error("default Help should match '?'")
+	}
+}
+
+func TestConfigureOverridesHelp(t *testing.T) {
+	t.Cleanup(func() { Configure(config.Default().Keys) })
+	kc := config.Default().Keys
+	kc.Help = []string{"H"}
+	Configure(kc)
+	if !key.Matches(runeMsg('H'), Map.Help) {
+		t.Error("after Configure, Help should match 'H'")
+	}
+	if key.Matches(runeMsg('?'), Map.Help) {
+		t.Error("after remap, '?' should no longer match Help")
+	}
+}

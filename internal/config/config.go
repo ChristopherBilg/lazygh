@@ -39,6 +39,7 @@ type GitHubConfig struct {
 // KeysConfig holds the resolved key bindings: one non-empty []string per action.
 type KeysConfig struct {
 	Quit             []string
+	Help             []string
 	Back             []string
 	Up               []string
 	Down             []string
@@ -82,6 +83,7 @@ func Default() Config {
 		},
 		Keys: KeysConfig{
 			Quit:             []string{"q"},
+			Help:             []string{"?"},
 			Back:             []string{"esc", "backspace"},
 			Up:               []string{"up", "k"},
 			Down:             []string{"down", "j"},
@@ -143,6 +145,7 @@ func (k *keyList) UnmarshalYAML(value *yaml.Node) error {
 
 type rawKeys struct {
 	Quit             *keyList `yaml:"quit"`
+	Help             *keyList `yaml:"help"`
 	Back             *keyList `yaml:"back"`
 	Up               *keyList `yaml:"up"`
 	Down             *keyList `yaml:"down"`
@@ -253,6 +256,7 @@ github:
   # merge_method: merge      # how 'M' merges a PR: merge, squash, or rebase
 keys:
   # quit: [q]                # ctrl+c always quits too
+  # help: ["?"]              # open the contextual keybindings overlay
   # back: [esc, backspace]
   # up: [up, k]
   # down: [down, j]
@@ -357,6 +361,7 @@ func applyKeys(cfg *Config, rk *rawKeys) {
 		dst  *[]string
 	}{
 		{"quit", rk.Quit, &cfg.Keys.Quit},
+		{"help", rk.Help, &cfg.Keys.Help},
 		{"back", rk.Back, &cfg.Keys.Back},
 		{"up", rk.Up, &cfg.Keys.Up},
 		{"down", rk.Down, &cfg.Keys.Down},

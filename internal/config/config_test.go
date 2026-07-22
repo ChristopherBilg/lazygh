@@ -621,3 +621,23 @@ func TestLoadAppliesMergeMethodAndActionKeys(t *testing.T) {
 		t.Errorf("Close = %v, want default (untouched)", got.Keys.Close)
 	}
 }
+
+func TestDefaultHelpKey(t *testing.T) {
+	if got := Default().Keys.Help; !slices.Equal(got, []string{"?"}) {
+		t.Fatalf("Default help key = %v, want [?]", got)
+	}
+}
+
+func TestApplyHelpOverride(t *testing.T) {
+	cfg := Default()
+	applyRaw(&cfg, raw{Keys: &rawKeys{Help: keyListPtr("H")}})
+	if !slices.Equal(cfg.Keys.Help, []string{"H"}) {
+		t.Fatalf("Help = %v, want [H] after override", cfg.Keys.Help)
+	}
+}
+
+func TestTemplateIncludesHelp(t *testing.T) {
+	if !strings.Contains(defaultConfigTemplate, `# help: ["?"]`) {
+		t.Fatalf("default config template missing the commented help key:\n%s", defaultConfigTemplate)
+	}
+}
