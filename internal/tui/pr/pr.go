@@ -126,6 +126,7 @@ type Backend interface {
 // Model is the pull-request split-pane screen.
 type Model struct {
 	backend     Backend
+	gen         uint64 // model generation; stamped onto every async message so the router can drop stale results (issue #46)
 	ctx         ghClient.RepoContext
 	cursor      int
 	focus       focus
@@ -155,7 +156,7 @@ type Model struct {
 // New returns a PR screen for the given repository, sized to the current window,
 // backed by the given github client. The repository owner/name are stored
 // immediately so the loading view can show the repository name.
-func New(backend Backend, owner, name string, width, height int) Model {
+func New(backend Backend, owner, name string, width, height int, gen uint64) Model {
 	ti := textinput.New()
 	ti.Prompt = "/ "
 	ti.Placeholder = "filter titles"
@@ -163,6 +164,7 @@ func New(backend Backend, owner, name string, width, height int) Model {
 
 	m := Model{
 		backend:  backend,
+		gen:      gen,
 		ctx:      ghClient.RepoContext{Owner: owner, Name: name},
 		focus:    focusList,
 		loading:  true,
@@ -366,24 +368,40 @@ func (m Model) updateSearch(msg tea.KeyMsg) (screen.Model, tea.Cmd) {
 }
 
 // prDataMsg carries fetched pull-request data.
-type prDataMsg ghClient.RepoContext
+type prDataMsg struct {
+	screen.GenStamp
+	ctx ghClient.RepoContext
+}
 
 // TargetView addresses fetched PR data to the pull-request screen.
 func (prDataMsg) TargetView() screen.ViewID { return screen.ViewPR }
 
 // currentUserMsg carries the resolved authenticated-user login to the PR screen.
-type currentUserMsg string
+type currentUserMsg struct {
+	screen.GenStamp
+	login string
+}
 
 // TargetView addresses the resolved login to the pull-request screen so it is
 // delivered even after a mid-fetch tab switch.
 func (currentUserMsg) TargetView() screen.ViewID { return screen.ViewPR }
 
-// statusMsg carries a transient footer status message.
-type statusMsg string
+// statusMsg carries a transient footer status message from a checkout /
+// open-in-browser command. It is addressed to the PR screen (the only screen
+// that issues these) and generation-stamped so a result from a superseded repo
+// selection is dropped (issue #46).
+type statusMsg struct {
+	screen.GenStamp
+	text string
+}
+
+// TargetView addresses the status message to the pull-request screen.
+func (statusMsg) TargetView() screen.ViewID { return screen.ViewPR }
 
 // actionResultMsg carries the outcome of a PR action (approve/merge/close): a
 // pre-formatted footer line and whether it succeeded (success triggers a refresh).
 type actionResultMsg struct {
+	screen.GenStamp
 	text string
 	ok   bool
 }
@@ -396,6 +414,7 @@ func (actionResultMsg) TargetView() screen.ViewID { return screen.ViewPR }
 // in-memory cache. A client-init failure is fatal (ErrMsg); any other failure is
 // a recoverable FetchErrMsg.
 func (m Model) fetchPRsCmd(owner, name string, force bool) tea.Cmd {
+	gen := m.gen
 	return func() tea.Msg {
 		// context.Background() for now; a program-scoped context is future work.
 		data, err := m.backend.RepoPRs(context.Background(), owner, name, force)
@@ -403,14 +422,15 @@ func (m Model) fetchPRsCmd(owner, name string, force bool) tea.Cmd {
 			if errors.Is(err, ghClient.ErrClientInit) {
 				return screen.ErrMsg{Err: err}
 			}
-			return screen.FetchErrMsg{View: screen.ViewPR, Err: err}
+			return screen.FetchErrMsg{GenStamp: screen.GenStamp{Gen: gen}, View: screen.ViewPR, Err: err}
 		}
-		return prDataMsg(data)
+		return prDataMsg{GenStamp: screen.GenStamp{Gen: gen}, ctx: data}
 	}
 }
 
 // prCommentsMsg carries fetched conversation comments for a specific PR.
 type prCommentsMsg struct {
+	screen.GenStamp
 	prNumber int
 	comments []ghClient.PRComment
 }
@@ -421,6 +441,7 @@ func (prCommentsMsg) TargetView() screen.ViewID { return screen.ViewPR }
 // prCommentsErrMsg reports a failed comment fetch for a specific PR; it renders
 // inside the Comments tab rather than as a global error.
 type prCommentsErrMsg struct {
+	screen.GenStamp
 	prNumber int
 	err      error
 }
@@ -433,6 +454,7 @@ func (prCommentsErrMsg) TargetView() screen.ViewID { return screen.ViewPR }
 // (prCommentsErrMsg).
 func (m Model) fetchCommentsCmd(prNumber int) tea.Cmd {
 	owner, name := m.ctx.Owner, m.ctx.Name
+	gen := m.gen
 	return func() tea.Msg {
 		// context.Background() for now; a program-scoped context is future work.
 		cs, err := m.backend.PRComments(context.Background(), owner, name, prNumber, false)
@@ -440,14 +462,15 @@ func (m Model) fetchCommentsCmd(prNumber int) tea.Cmd {
 			if errors.Is(err, ghClient.ErrClientInit) {
 				return screen.ErrMsg{Err: err}
 			}
-			return prCommentsErrMsg{prNumber: prNumber, err: err}
+			return prCommentsErrMsg{GenStamp: screen.GenStamp{Gen: gen}, prNumber: prNumber, err: err}
 		}
-		return prCommentsMsg{prNumber: prNumber, comments: cs}
+		return prCommentsMsg{GenStamp: screen.GenStamp{Gen: gen}, prNumber: prNumber, comments: cs}
 	}
 }
 
 // prDiffMsg carries a fetched, highlighted diff for a specific PR.
 type prDiffMsg struct {
+	screen.GenStamp
 	prNumber int
 	content  string
 }
@@ -458,6 +481,7 @@ func (prDiffMsg) TargetView() screen.ViewID { return screen.ViewPR }
 // prDiffErrMsg reports a failed diff fetch for a specific PR; it renders inside the
 // Files Changed tab rather than as a global error.
 type prDiffErrMsg struct {
+	screen.GenStamp
 	prNumber int
 	err      error
 }
@@ -470,13 +494,14 @@ func (prDiffErrMsg) TargetView() screen.ViewID { return screen.ViewPR }
 // path; any failure renders inside the Files Changed tab (prDiffErrMsg).
 func (m Model) fetchDiffCmd(prNumber int) tea.Cmd {
 	owner, name := m.ctx.Owner, m.ctx.Name
+	gen := m.gen
 	return func() tea.Msg {
 		// context.Background() for now; a program-scoped context is future work.
 		raw, err := m.backend.PRDiff(context.Background(), owner, name, prNumber, false)
 		if err != nil {
-			return prDiffErrMsg{prNumber: prNumber, err: err}
+			return prDiffErrMsg{GenStamp: screen.GenStamp{Gen: gen}, prNumber: prNumber, err: err}
 		}
-		return prDiffMsg{prNumber: prNumber, content: diff.Highlight(raw)}
+		return prDiffMsg{GenStamp: screen.GenStamp{Gen: gen}, prNumber: prNumber, content: diff.Highlight(raw)}
 	}
 }
 
@@ -538,55 +563,60 @@ func (m *Model) maybeFetchActiveTab() tea.Cmd {
 }
 
 func (m Model) checkoutCmd(owner, name string, prNumber int) tea.Cmd {
+	gen := m.gen
 	return func() tea.Msg {
 		// context.Background() for now; a program-scoped context is future work.
 		if err := m.backend.CheckoutPR(context.Background(), owner, name, prNumber); err != nil {
 			if errors.Is(err, ghClient.ErrNotLocalRepo) {
-				return statusMsg(fmt.Sprintf("Checkout unavailable: lazygh isn't running in a clone of %s/%s", owner, name))
+				return statusMsg{GenStamp: screen.GenStamp{Gen: gen}, text: fmt.Sprintf("Checkout unavailable: lazygh isn't running in a clone of %s/%s", owner, name)}
 			}
-			return statusMsg(fmt.Sprintf("Checkout failed: %v", err))
+			return statusMsg{GenStamp: screen.GenStamp{Gen: gen}, text: fmt.Sprintf("Checkout failed: %v", err)}
 		}
-		return statusMsg(fmt.Sprintf("Successfully checked out PR #%d", prNumber))
+		return statusMsg{GenStamp: screen.GenStamp{Gen: gen}, text: fmt.Sprintf("Successfully checked out PR #%d", prNumber)}
 	}
 }
 
 func (m Model) openBrowserCmd(owner, name string, prNumber int) tea.Cmd {
+	gen := m.gen
 	return func() tea.Msg {
 		// context.Background() for now; a program-scoped context is future work.
 		if err := m.backend.OpenPRInBrowser(context.Background(), owner, name, prNumber); err != nil {
-			return statusMsg(fmt.Sprintf("Open in browser failed: %v", err))
+			return statusMsg{GenStamp: screen.GenStamp{Gen: gen}, text: fmt.Sprintf("Open in browser failed: %v", err)}
 		}
-		return statusMsg(fmt.Sprintf("Opened PR #%d in browser", prNumber))
+		return statusMsg{GenStamp: screen.GenStamp{Gen: gen}, text: fmt.Sprintf("Opened PR #%d in browser", prNumber)}
 	}
 }
 
 func (m Model) approveCmd(owner, name string, prNumber int) tea.Cmd {
+	gen := m.gen
 	return func() tea.Msg {
 		// context.Background() for now; a program-scoped context is future work.
 		if err := m.backend.ApprovePR(context.Background(), owner, name, prNumber); err != nil {
-			return actionResultMsg{text: fmt.Sprintf("Approve PR #%d failed: %v", prNumber, err)}
+			return actionResultMsg{GenStamp: screen.GenStamp{Gen: gen}, text: fmt.Sprintf("Approve PR #%d failed: %v", prNumber, err)}
 		}
-		return actionResultMsg{text: fmt.Sprintf("Approved PR #%d", prNumber), ok: true}
+		return actionResultMsg{GenStamp: screen.GenStamp{Gen: gen}, text: fmt.Sprintf("Approved PR #%d", prNumber), ok: true}
 	}
 }
 
 func (m Model) mergeCmd(owner, name string, prNumber int) tea.Cmd {
+	gen := m.gen
 	return func() tea.Msg {
 		// context.Background() for now; a program-scoped context is future work.
 		if err := m.backend.MergePR(context.Background(), owner, name, prNumber); err != nil {
-			return actionResultMsg{text: fmt.Sprintf("Merge PR #%d failed: %v", prNumber, err)}
+			return actionResultMsg{GenStamp: screen.GenStamp{Gen: gen}, text: fmt.Sprintf("Merge PR #%d failed: %v", prNumber, err)}
 		}
-		return actionResultMsg{text: fmt.Sprintf("Merged PR #%d", prNumber), ok: true}
+		return actionResultMsg{GenStamp: screen.GenStamp{Gen: gen}, text: fmt.Sprintf("Merged PR #%d", prNumber), ok: true}
 	}
 }
 
 func (m Model) closeCmd(owner, name string, prNumber int) tea.Cmd {
+	gen := m.gen
 	return func() tea.Msg {
 		// context.Background() for now; a program-scoped context is future work.
 		if err := m.backend.ClosePR(context.Background(), owner, name, prNumber); err != nil {
-			return actionResultMsg{text: fmt.Sprintf("Close PR #%d failed: %v", prNumber, err)}
+			return actionResultMsg{GenStamp: screen.GenStamp{Gen: gen}, text: fmt.Sprintf("Close PR #%d failed: %v", prNumber, err)}
 		}
-		return actionResultMsg{text: fmt.Sprintf("Closed PR #%d", prNumber), ok: true}
+		return actionResultMsg{GenStamp: screen.GenStamp{Gen: gen}, text: fmt.Sprintf("Closed PR #%d", prNumber), ok: true}
 	}
 }
 
@@ -594,26 +624,33 @@ func (m Model) closeCmd(owner, name string, prNumber int) tea.Cmd {
 // client). A failure is logged and reported as an empty login, which simply
 // leaves the user-dependent filters matching nothing.
 func (m Model) currentUserCmd() tea.Cmd {
+	gen := m.gen
 	return func() tea.Msg {
 		// context.Background() for now; a program-scoped context is future work.
 		login, err := m.backend.CurrentUser(context.Background())
 		if err != nil {
 			slog.Warn("could not resolve current user; My PRs / Needs my Review filters will be empty", "err", err)
-			return currentUserMsg("")
+			return currentUserMsg{GenStamp: screen.GenStamp{Gen: gen}}
 		}
-		return currentUserMsg(login)
+		return currentUserMsg{GenStamp: screen.GenStamp{Gen: gen}, login: login}
 	}
 }
 
 // prChecksMsg carries the freshly fetched per-PR aggregate check statuses.
-type prChecksMsg struct{ checks map[int]ghClient.CheckStatus }
+type prChecksMsg struct {
+	screen.GenStamp
+	checks map[int]ghClient.CheckStatus
+}
 
 // TargetView addresses fetched check statuses to the pull-request screen so they are
 // delivered even after a mid-fetch tab switch.
 func (prChecksMsg) TargetView() screen.ViewID { return screen.ViewPR }
 
 // prChecksErrMsg reports a failed check-status fetch; indicators are left neutral.
-type prChecksErrMsg struct{ err error }
+type prChecksErrMsg struct {
+	screen.GenStamp
+	err error
+}
 
 // TargetView addresses the check-fetch error to the pull-request screen.
 func (prChecksErrMsg) TargetView() screen.ViewID { return screen.ViewPR }
@@ -622,13 +659,14 @@ func (prChecksErrMsg) TargetView() screen.ViewID { return screen.ViewPR }
 // RepoPRChecks already logs the cause on failure; the handler leaves indicators
 // neutral. The fetch is non-blocking so the list renders before statuses arrive.
 func (m Model) fetchChecksCmd(owner, name string) tea.Cmd {
+	gen := m.gen
 	return func() tea.Msg {
 		// context.Background() for now; a program-scoped context is future work.
 		checks, err := m.backend.RepoPRChecks(context.Background(), owner, name)
 		if err != nil {
-			return prChecksErrMsg{err: err}
+			return prChecksErrMsg{GenStamp: screen.GenStamp{Gen: gen}, err: err}
 		}
-		return prChecksMsg{checks: checks}
+		return prChecksMsg{GenStamp: screen.GenStamp{Gen: gen}, checks: checks}
 	}
 }
 
@@ -757,7 +795,7 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		}
 
 	case prDataMsg:
-		m.ctx = ghClient.RepoContext(msg)
+		m.ctx = msg.ctx
 		m.loading = false
 		m.refreshing = false
 		m.fetchErr = nil
@@ -769,7 +807,7 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		}
 
 	case currentUserMsg:
-		m.currentUser = string(msg)
+		m.currentUser = msg.login
 		// Re-apply an active user-dependent filter now that the login is known.
 		if m.filter == filterMine || m.filter == filterNeedsReview {
 			m.recompute()
@@ -781,7 +819,7 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		m.fetchErr = msg.Err
 
 	case statusMsg:
-		m.message = string(msg)
+		m.message = msg.text
 
 	case actionResultMsg:
 		m.message = msg.text

@@ -81,7 +81,7 @@ func comment(login, body string) ghClient.PRComment {
 
 // withPRs builds a loaded PR screen with n synthetic pull requests.
 func withPRs(n int) Model {
-	m := New(fakeBackend{}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40, 0)
 	m.loading = false
 	prs := make([]ghClient.PullRequest, n)
 	for i := range prs {
@@ -95,7 +95,7 @@ func withPRs(n int) Model {
 // withTitledPRs builds a loaded PR screen with one PR per given title (numbered
 // from 1), so search/ranking behavior can be asserted.
 func withTitledPRs(titles ...string) Model {
-	m := New(fakeBackend{}, "octocat", "hello", 120, 40)
+	m := New(fakeBackend{}, "octocat", "hello", 120, 40, 0)
 	m.loading = false
 	prs := make([]ghClient.PullRequest, len(titles))
 	for i, title := range titles {
@@ -203,13 +203,13 @@ func TestCheckoutEmptyListNoOp(t *testing.T) {
 
 func TestPRDataMsgPopulates(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40, 0)
 	ctx := ghClient.RepoContext{
 		Owner: "octocat",
 		Name:  "hello",
 		PRs:   []ghClient.PullRequest{{Number: 1, Title: "T", State: "open"}, {Number: 2}},
 	}
-	updated, _ := m.Update(prDataMsg(ctx))
+	updated, _ := m.Update(prDataMsg{ctx: ctx})
 	um := updated.(Model)
 	if um.loading {
 		t.Fatal("expected loading=false after prDataMsg")
@@ -235,7 +235,7 @@ func TestViewRendersTabBar(t *testing.T) {
 
 func TestLoadingViewRendersTabBar(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{}, "octocat", "hello", 100, 40) // loading == true
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40, 0) // loading == true
 	v := m.View()
 	for _, label := range []string{"Pull Requests", "Issues", "Actions"} {
 		if !strings.Contains(v, label) {
@@ -275,7 +275,7 @@ func TestPRDataMsgClearsRefreshingState(t *testing.T) {
 		Name:  "hello",
 		PRs:   []ghClient.PullRequest{{Number: 1, Title: "T", State: "open"}},
 	}
-	updated, _ := m.Update(prDataMsg(ctx))
+	updated, _ := m.Update(prDataMsg{ctx: ctx})
 	if updated.(Model).refreshing {
 		t.Fatal("expected refreshing=false after data lands")
 	}
@@ -291,7 +291,7 @@ func TestPRDataMsgClampsCursorWhenListShrinks(t *testing.T) {
 		PRs:   []ghClient.PullRequest{{Number: 1, Title: "T", State: "open"}},
 	}
 	// Must not panic: updateViewportContent indexes PRs[cursor].
-	updated, _ := m.Update(prDataMsg(ctx))
+	updated, _ := m.Update(prDataMsg{ctx: ctx})
 	if got := updated.(Model).cursor; got != 0 {
 		t.Fatalf("cursor = %d, want 0 after list shrank to 1", got)
 	}
@@ -312,7 +312,7 @@ func TestPRDataMsgResetsScrollOnRefresh(t *testing.T) {
 		Name:  "hello",
 		PRs:   []ghClient.PullRequest{{Number: 1, Title: "T", State: "open", Body: strings.Repeat("line\n", 200)}},
 	}
-	updated, _ := m.Update(prDataMsg(ctx))
+	updated, _ := m.Update(prDataMsg{ctx: ctx})
 	if !updated.(Model).viewport.AtTop() {
 		t.Fatal("refresh should reset the viewport scroll to the top")
 	}
@@ -327,7 +327,7 @@ func TestPRDataMsgPreservesNonRefreshMessage(t *testing.T) {
 		Name:  "hello",
 		PRs:   []ghClient.PullRequest{{Number: 1, Title: "T", State: "open"}},
 	}
-	updated, _ := m.Update(prDataMsg(ctx))
+	updated, _ := m.Update(prDataMsg{ctx: ctx})
 	if got := updated.(Model).message; got != "Opened PR #1 in browser" {
 		t.Fatalf("message = %q, want it preserved (only \"Refreshing...\" should be cleared)", got)
 	}
@@ -335,7 +335,7 @@ func TestPRDataMsgPreservesNonRefreshMessage(t *testing.T) {
 
 func TestPRDataMsgTargetView(t *testing.T) {
 	t.Parallel()
-	if prDataMsg(ghClient.RepoContext{}).TargetView() != screen.ViewPR {
+	if (prDataMsg{}).TargetView() != screen.ViewPR {
 		t.Fatal("prDataMsg must target the PR view")
 	}
 }
@@ -345,7 +345,7 @@ func TestPRDataMsgClearsFetchErr(t *testing.T) {
 	m := withPRs(1)
 	m.fetchErr = errors.New("old")
 	ctx := ghClient.RepoContext{Owner: "o", Name: "n", PRs: []ghClient.PullRequest{{Number: 1}}}
-	updated, _ := m.Update(prDataMsg(ctx))
+	updated, _ := m.Update(prDataMsg{ctx: ctx})
 	if updated.(Model).fetchErr != nil {
 		t.Fatal("expected fetchErr cleared after successful data")
 	}
@@ -353,7 +353,7 @@ func TestPRDataMsgClearsFetchErr(t *testing.T) {
 
 func TestFetchErrMsgWithNoDataShowsError(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{}, "octocat", "hello", 100, 40) // loading, no PRs
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40, 0) // loading, no PRs
 	updated, _ := m.Update(screen.FetchErrMsg{View: screen.ViewPR, Err: errors.New("boom")})
 	um := updated.(Model)
 	if um.loading {
@@ -400,7 +400,7 @@ func TestSpinnerTickIgnoredWhenIdle(t *testing.T) {
 
 func TestSpinnerTickContinuesWhileFetching(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{}, "octocat", "hello", 100, 40) // loading == true
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40, 0) // loading == true
 	_, cmd := m.Update(spinner.TickMsg{})
 	if cmd == nil {
 		t.Fatal("expected the tick loop to continue while loading")
@@ -432,65 +432,65 @@ func TestStatusMessageShownInFooter(t *testing.T) {
 
 func TestCheckoutCmdUnavailableMessage(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{checkoutErr: ghClient.ErrNotLocalRepo}, "octocat", "other", 100, 40)
+	m := New(fakeBackend{checkoutErr: ghClient.ErrNotLocalRepo}, "octocat", "other", 100, 40, 0)
 	msg := m.checkoutCmd("octocat", "other", 42)()
 	status, ok := msg.(statusMsg)
 	if !ok {
 		t.Fatalf("expected statusMsg, got %T", msg)
 	}
-	if got := string(status); !strings.Contains(got, "Checkout unavailable") || !strings.Contains(got, "octocat/other") {
+	if got := status.text; !strings.Contains(got, "Checkout unavailable") || !strings.Contains(got, "octocat/other") {
 		t.Fatalf("status = %q, want 'Checkout unavailable' mentioning octocat/other", got)
 	}
 }
 
 func TestCheckoutCmdSuccessMessage(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40, 0)
 	msg := m.checkoutCmd("octocat", "hello", 7)()
 	status, ok := msg.(statusMsg)
 	if !ok {
 		t.Fatalf("expected statusMsg, got %T", msg)
 	}
-	if got := string(status); !strings.Contains(got, "Successfully checked out PR #7") {
+	if got := status.text; !strings.Contains(got, "Successfully checked out PR #7") {
 		t.Fatalf("status = %q, want success message", got)
 	}
 }
 
 func TestCheckoutCmdFailureMessage(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{checkoutErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{checkoutErr: errors.New("boom")}, "octocat", "hello", 100, 40, 0)
 	msg := m.checkoutCmd("octocat", "hello", 7)()
 	status, ok := msg.(statusMsg)
 	if !ok {
 		t.Fatalf("expected statusMsg, got %T", msg)
 	}
-	if got := string(status); !strings.Contains(got, "Checkout failed") || !strings.Contains(got, "boom") {
+	if got := status.text; !strings.Contains(got, "Checkout failed") || !strings.Contains(got, "boom") {
 		t.Fatalf("status = %q, want failure message", got)
 	}
 }
 
 func TestOpenBrowserCmdSuccessMessage(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40, 0)
 	msg := m.openBrowserCmd("octocat", "hello", 9)()
 	status, ok := msg.(statusMsg)
 	if !ok {
 		t.Fatalf("expected statusMsg, got %T", msg)
 	}
-	if got := string(status); !strings.Contains(got, "Opened PR #9 in browser") {
+	if got := status.text; !strings.Contains(got, "Opened PR #9 in browser") {
 		t.Fatalf("status = %q, want success message", got)
 	}
 }
 
 func TestOpenBrowserCmdFailureMessage(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{openErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{openErr: errors.New("boom")}, "octocat", "hello", 100, 40, 0)
 	msg := m.openBrowserCmd("octocat", "hello", 9)()
 	status, ok := msg.(statusMsg)
 	if !ok {
 		t.Fatalf("expected statusMsg, got %T", msg)
 	}
-	if got := string(status); !strings.Contains(got, "Open in browser failed") || !strings.Contains(got, "boom") {
+	if got := status.text; !strings.Contains(got, "Open in browser failed") || !strings.Contains(got, "boom") {
 		t.Fatalf("status = %q, want failure message", got)
 	}
 }
@@ -498,20 +498,20 @@ func TestOpenBrowserCmdFailureMessage(t *testing.T) {
 func TestFetchPRsCmdSuccessReturnsData(t *testing.T) {
 	t.Parallel()
 	prs := []ghClient.PullRequest{{Number: 1, Title: "T", State: "open"}}
-	m := New(fakeBackend{prs: prs}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{prs: prs}, "octocat", "hello", 100, 40, 0)
 	msg := m.fetchPRsCmd("octocat", "hello", false)()
 	data, ok := msg.(prDataMsg)
 	if !ok {
 		t.Fatalf("expected prDataMsg, got %T", msg)
 	}
-	if len(data.PRs) != 1 {
-		t.Fatalf("len(PRs) = %d, want 1", len(data.PRs))
+	if len(data.ctx.PRs) != 1 {
+		t.Fatalf("len(PRs) = %d, want 1", len(data.ctx.PRs))
 	}
 }
 
 func TestFetchPRsCmdClientInitErrorIsFatal(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{prsErr: ghClient.ErrClientInit}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{prsErr: ghClient.ErrClientInit}, "octocat", "hello", 100, 40, 0)
 	msg := m.fetchPRsCmd("octocat", "hello", false)()
 	errMsg, ok := msg.(screen.ErrMsg)
 	if !ok {
@@ -524,7 +524,7 @@ func TestFetchPRsCmdClientInitErrorIsFatal(t *testing.T) {
 
 func TestFetchPRsCmdOtherErrorIsRecoverable(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{prsErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{prsErr: errors.New("boom")}, "octocat", "hello", 100, 40, 0)
 	msg := m.fetchPRsCmd("octocat", "hello", false)()
 	fetchErr, ok := msg.(screen.FetchErrMsg)
 	if !ok {
@@ -537,7 +537,7 @@ func TestFetchPRsCmdOtherErrorIsRecoverable(t *testing.T) {
 
 func TestFetchCommentsCmdSuccess(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{comments: []ghClient.PRComment{comment("alice", "hi")}}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{comments: []ghClient.PRComment{comment("alice", "hi")}}, "octocat", "hello", 100, 40, 0)
 	msg := m.fetchCommentsCmd(7)()
 	got, ok := msg.(prCommentsMsg)
 	if !ok {
@@ -550,7 +550,7 @@ func TestFetchCommentsCmdSuccess(t *testing.T) {
 
 func TestFetchCommentsCmdClientInitFatal(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{commentsErr: ghClient.ErrClientInit}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{commentsErr: ghClient.ErrClientInit}, "octocat", "hello", 100, 40, 0)
 	if _, ok := m.fetchCommentsCmd(7)().(screen.ErrMsg); !ok {
 		t.Fatalf("expected screen.ErrMsg for ErrClientInit")
 	}
@@ -558,7 +558,7 @@ func TestFetchCommentsCmdClientInitFatal(t *testing.T) {
 
 func TestFetchCommentsCmdOtherError(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{commentsErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{commentsErr: errors.New("boom")}, "octocat", "hello", 100, 40, 0)
 	got, ok := m.fetchCommentsCmd(7)().(prCommentsErrMsg)
 	if !ok {
 		t.Fatalf("expected prCommentsErrMsg, got non-error message")
@@ -681,7 +681,7 @@ func TestSlashIgnoredWhenDetailFocused(t *testing.T) {
 
 func TestSlashIgnoredWhileLoading(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{}, "octocat", "hello", 100, 40) // loading == true, no PRs
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40, 0) // loading == true, no PRs
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
 	if updated.(Model).searching {
 		t.Fatal("'/' must not start search while the loading screen is shown")
@@ -690,7 +690,7 @@ func TestSlashIgnoredWhileLoading(t *testing.T) {
 
 func TestSlashIgnoredOnFatalErrorScreen(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40, 0)
 	fe, _ := m.Update(screen.FetchErrMsg{View: screen.ViewPR, Err: errors.New("boom")})
 	m = fe.(Model) // fatal error screen: loading cleared, fetchErr set, no PRs
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
@@ -812,7 +812,7 @@ func TestRefreshPreservesFilter(t *testing.T) {
 		{Number: 10, Title: "cache warmup", State: "open"},
 		{Number: 11, Title: "unrelated", State: "open"},
 	}}
-	dm, _ := m.Update(prDataMsg(ctx))
+	dm, _ := m.Update(prDataMsg{ctx: ctx})
 	m = dm.(Model)
 	if m.query != "cache" || len(m.filtered) != 1 {
 		t.Fatalf("query=%q filtered=%d, want cache/1 preserved across refresh", m.query, len(m.filtered))
@@ -1022,7 +1022,7 @@ func TestFilterAllUnchanged(t *testing.T) {
 func TestCurrentUserMsgStoresLogin(t *testing.T) {
 	t.Parallel()
 	m := withPRs(2)
-	updated, _ := m.Update(currentUserMsg("octocat"))
+	updated, _ := m.Update(currentUserMsg{login: "octocat"})
 	if got := updated.(Model).currentUser; got != "octocat" {
 		t.Fatalf("currentUser = %q, want octocat", got)
 	}
@@ -1040,7 +1040,7 @@ func TestCurrentUserMsgReappliesActiveFilter(t *testing.T) {
 	if len(m.filtered) != 0 {
 		t.Fatalf("precondition: want 0 filtered before login resolves, got %d", len(m.filtered))
 	}
-	updated, _ := m.Update(currentUserMsg("octocat"))
+	updated, _ := m.Update(currentUserMsg{login: "octocat"})
 	if got := prNumbers(updated.(Model)); !slices.Equal(got, []int{1}) {
 		t.Fatalf("filtered = %v, want [1] after login resolves", got)
 	}
@@ -1056,7 +1056,7 @@ func TestCurrentUserMsgSkipsRecomputeWhenFilterNotUserDependent(t *testing.T) {
 	if m.viewport.AtTop() {
 		t.Fatal("precondition: expected viewport scrolled away from top")
 	}
-	updated, _ := m.Update(currentUserMsg("octocat"))
+	updated, _ := m.Update(currentUserMsg{login: "octocat"})
 	um := updated.(Model)
 	if um.currentUser != "octocat" {
 		t.Fatalf("currentUser = %q, want octocat (login still stored)", um.currentUser)
@@ -1068,14 +1068,14 @@ func TestCurrentUserMsgSkipsRecomputeWhenFilterNotUserDependent(t *testing.T) {
 
 func TestCurrentUserMsgTargetView(t *testing.T) {
 	t.Parallel()
-	if currentUserMsg("x").TargetView() != screen.ViewPR {
+	if (currentUserMsg{login: "x"}).TargetView() != screen.ViewPR {
 		t.Fatal("currentUserMsg must target the PR view")
 	}
 }
 
 func TestInitEmitsCurrentUserCmd(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{currentUser: "octocat"}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{currentUser: "octocat"}, "octocat", "hello", 100, 40, 0)
 	msg := m.Init()()
 	batch, ok := msg.(tea.BatchMsg)
 	if !ok {
@@ -1094,27 +1094,27 @@ func TestInitEmitsCurrentUserCmd(t *testing.T) {
 
 func TestCurrentUserCmdReturnsLogin(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{currentUser: "octocat"}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{currentUser: "octocat"}, "octocat", "hello", 100, 40, 0)
 	msg := m.currentUserCmd()()
 	cu, ok := msg.(currentUserMsg)
 	if !ok {
 		t.Fatalf("got %T, want currentUserMsg", msg)
 	}
-	if string(cu) != "octocat" {
-		t.Fatalf("login = %q, want octocat", string(cu))
+	if cu.login != "octocat" {
+		t.Fatalf("login = %q, want octocat", cu.login)
 	}
 }
 
 func TestCurrentUserCmdEmptyOnError(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{currentUserErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{currentUserErr: errors.New("boom")}, "octocat", "hello", 100, 40, 0)
 	msg := m.currentUserCmd()()
 	cu, ok := msg.(currentUserMsg)
 	if !ok {
 		t.Fatalf("got %T, want currentUserMsg", msg)
 	}
-	if string(cu) != "" {
-		t.Fatalf("login = %q, want empty on error", string(cu))
+	if cu.login != "" {
+		t.Fatalf("login = %q, want empty on error", cu.login)
 	}
 }
 
@@ -1122,7 +1122,7 @@ func TestCurrentUserCmdEmptyOnError(t *testing.T) {
 // are not truncated in the narrow left pane) with the given PRs and current user,
 // then recomputes.
 func withWideFilteredPRs(currentUser string, prs ...ghClient.PullRequest) Model {
-	m := New(fakeBackend{}, "octocat", "hello", 300, 40)
+	m := New(fakeBackend{}, "octocat", "hello", 300, 40, 0)
 	m.loading = false
 	m.currentUser = currentUser
 	m.ctx.PRs = prs
@@ -1188,7 +1188,7 @@ func TestFilterKeyResetsCursor(t *testing.T) {
 
 func TestFilterKeyIgnoredWhileLoading(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{}, "octocat", "hello", 100, 40) // loading == true
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40, 0) // loading == true
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
 	if updated.(Model).filter != filterAll {
 		t.Fatal("filter must not change while loading")
@@ -1277,7 +1277,7 @@ func TestFilterReviewKeyApplies(t *testing.T) {
 
 func TestFilterKeyIgnoredOnFatalErrorScreen(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40, 0)
 	fe, _ := m.Update(screen.FetchErrMsg{View: screen.ViewPR, Err: errors.New("boom")})
 	m = fe.(Model) // fatal error screen: loading cleared, fetchErr set, no PRs
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
@@ -1567,7 +1567,7 @@ func TestApproveEmptyListNoOp(t *testing.T) {
 
 func TestApproveCmdSuccess(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{}, "octocat", "hello", 100, 40, 0)
 	msg := m.approveCmd("octocat", "hello", 7)()
 	res, ok := msg.(actionResultMsg)
 	if !ok {
@@ -1580,7 +1580,7 @@ func TestApproveCmdSuccess(t *testing.T) {
 
 func TestApproveCmdFailure(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{approveErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{approveErr: errors.New("boom")}, "octocat", "hello", 100, 40, 0)
 	msg := m.approveCmd("octocat", "hello", 7)()
 	res, ok := msg.(actionResultMsg)
 	if !ok {
@@ -1705,11 +1705,11 @@ func TestConfirmCancelKeys(t *testing.T) {
 
 func TestMergeCmdSuccessAndFailure(t *testing.T) {
 	t.Parallel()
-	ok := New(fakeBackend{}, "octocat", "hello", 100, 40).mergeCmd("octocat", "hello", 7)()
+	ok := New(fakeBackend{}, "octocat", "hello", 100, 40, 0).mergeCmd("octocat", "hello", 7)()
 	if r, _ := ok.(actionResultMsg); !r.ok || !strings.Contains(r.text, "Merged PR #7") {
 		t.Fatalf("success = %+v, want ok mentioning PR #7", ok)
 	}
-	bad := New(fakeBackend{mergeErr: errors.New("boom")}, "octocat", "hello", 100, 40).mergeCmd("octocat", "hello", 7)()
+	bad := New(fakeBackend{mergeErr: errors.New("boom")}, "octocat", "hello", 100, 40, 0).mergeCmd("octocat", "hello", 7)()
 	if r, _ := bad.(actionResultMsg); r.ok || !strings.Contains(r.text, "boom") {
 		t.Fatalf("failure = %+v, want failure mentioning boom", bad)
 	}
@@ -1717,11 +1717,11 @@ func TestMergeCmdSuccessAndFailure(t *testing.T) {
 
 func TestCloseCmdSuccessAndFailure(t *testing.T) {
 	t.Parallel()
-	ok := New(fakeBackend{}, "octocat", "hello", 100, 40).closeCmd("octocat", "hello", 7)()
+	ok := New(fakeBackend{}, "octocat", "hello", 100, 40, 0).closeCmd("octocat", "hello", 7)()
 	if r, _ := ok.(actionResultMsg); !r.ok || !strings.Contains(r.text, "Closed PR #7") {
 		t.Fatalf("success = %+v, want ok mentioning PR #7", ok)
 	}
-	bad := New(fakeBackend{closeErr: errors.New("boom")}, "octocat", "hello", 100, 40).closeCmd("octocat", "hello", 7)()
+	bad := New(fakeBackend{closeErr: errors.New("boom")}, "octocat", "hello", 100, 40, 0).closeCmd("octocat", "hello", 7)()
 	if r, _ := bad.(actionResultMsg); r.ok || !strings.Contains(r.text, "boom") {
 		t.Fatalf("failure = %+v, want failure mentioning boom", bad)
 	}
@@ -1850,7 +1850,7 @@ func TestPRChecksErrLeavesScreenHealthy(t *testing.T) {
 
 func TestFetchChecksCmdSuccess(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{checks: map[int]ghClient.CheckStatus{7: ghClient.CheckPassing}}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{checks: map[int]ghClient.CheckStatus{7: ghClient.CheckPassing}}, "octocat", "hello", 100, 40, 0)
 	msg := m.fetchChecksCmd("octocat", "hello")()
 	cm, ok := msg.(prChecksMsg)
 	if !ok {
@@ -1863,7 +1863,7 @@ func TestFetchChecksCmdSuccess(t *testing.T) {
 
 func TestFetchChecksCmdError(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{checksErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{checksErr: errors.New("boom")}, "octocat", "hello", 100, 40, 0)
 	if _, ok := m.fetchChecksCmd("octocat", "hello")().(prChecksErrMsg); !ok {
 		t.Fatal("expected prChecksErrMsg on backend error")
 	}
@@ -1871,9 +1871,9 @@ func TestFetchChecksCmdError(t *testing.T) {
 
 func TestPRDataDispatchesChecksFetch(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{checks: map[int]ghClient.CheckStatus{1: ghClient.CheckPassing}}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{checks: map[int]ghClient.CheckStatus{1: ghClient.CheckPassing}}, "octocat", "hello", 100, 40, 0)
 	prs := []ghClient.PullRequest{{Number: 1, Title: "one", State: "open"}}
-	_, cmd := m.Update(prDataMsg(ghClient.RepoContext{Owner: "octocat", Name: "hello", PRs: prs}))
+	_, cmd := m.Update(prDataMsg{ctx: ghClient.RepoContext{Owner: "octocat", Name: "hello", PRs: prs}})
 	found := slices.ContainsFunc(drainCmd(cmd), func(msg tea.Msg) bool {
 		_, ok := msg.(prChecksMsg)
 		return ok
@@ -1885,7 +1885,7 @@ func TestPRDataDispatchesChecksFetch(t *testing.T) {
 
 func TestFetchDiffCmdSuccessHighlights(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{diff: "diff --git a/x b/x\n@@ -0,0 +1 @@\n+added\n"}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{diff: "diff --git a/x b/x\n@@ -0,0 +1 @@\n+added\n"}, "octocat", "hello", 100, 40, 0)
 	got, ok := m.fetchDiffCmd(7)().(prDiffMsg)
 	if !ok {
 		t.Fatal("expected prDiffMsg")
@@ -1900,7 +1900,7 @@ func TestFetchDiffCmdSuccessHighlights(t *testing.T) {
 
 func TestFetchDiffCmdEmptyDiff(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{diff: "   \n"}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{diff: "   \n"}, "octocat", "hello", 100, 40, 0)
 	got, ok := m.fetchDiffCmd(7)().(prDiffMsg)
 	if !ok {
 		t.Fatal("expected prDiffMsg")
@@ -1912,7 +1912,7 @@ func TestFetchDiffCmdEmptyDiff(t *testing.T) {
 
 func TestFetchDiffCmdError(t *testing.T) {
 	t.Parallel()
-	m := New(fakeBackend{diffErr: errors.New("boom")}, "octocat", "hello", 100, 40)
+	m := New(fakeBackend{diffErr: errors.New("boom")}, "octocat", "hello", 100, 40, 0)
 	got, ok := m.fetchDiffCmd(7)().(prDiffErrMsg)
 	if !ok {
 		t.Fatal("expected prDiffErrMsg")
@@ -2086,5 +2086,83 @@ func TestFilterOnFilesChangedTabTriggersDiffFetch(t *testing.T) {
 	}
 	if um.diffs[2].status != diffLoading {
 		t.Fatalf("diffs[2].status = %d, want diffLoading", um.diffs[2].status)
+	}
+}
+
+// TestAsyncProducersStampGeneration asserts every async producer command stamps
+// its result message with the model generation, so the router's stale-drop guard
+// (issue #46) applies uniformly. Covers success and error branches; each returned
+// message must implement screen.Generational and report the model's generation.
+func TestAsyncProducersStampGeneration(t *testing.T) {
+	t.Parallel()
+	const gen uint64 = 7
+
+	okBackend := fakeBackend{
+		prs:         []ghClient.PullRequest{{Number: 1}},
+		currentUser: "octocat",
+		comments:    []ghClient.PRComment{comment("alice", "hi")},
+		diff:        "diff",
+		checks:      map[int]ghClient.CheckStatus{1: ghClient.CheckPassing},
+	}
+	errBackend := fakeBackend{
+		prsErr:         errors.New("boom"),
+		currentUserErr: errors.New("boom"),
+		checkoutErr:    errors.New("boom"),
+		openErr:        errors.New("boom"),
+		approveErr:     errors.New("boom"),
+		mergeErr:       errors.New("boom"),
+		closeErr:       errors.New("boom"),
+		commentsErr:    errors.New("boom"),
+		diffErr:        errors.New("boom"),
+		checksErr:      errors.New("boom"),
+	}
+	notLocalBackend := fakeBackend{checkoutErr: ghClient.ErrNotLocalRepo}
+
+	tests := []struct {
+		name    string
+		backend fakeBackend
+		cmd     func(m Model) tea.Cmd
+	}{
+		{"fetchPRs/ok", okBackend, func(m Model) tea.Cmd { return m.fetchPRsCmd("o", "n", false) }},
+		{"fetchPRs/err", errBackend, func(m Model) tea.Cmd { return m.fetchPRsCmd("o", "n", false) }},
+		{"currentUser/ok", okBackend, func(m Model) tea.Cmd { return m.currentUserCmd() }},
+		{"currentUser/err", errBackend, func(m Model) tea.Cmd { return m.currentUserCmd() }},
+		{"checkout/ok", okBackend, func(m Model) tea.Cmd { return m.checkoutCmd("o", "n", 1) }},
+		{"checkout/failed", errBackend, func(m Model) tea.Cmd { return m.checkoutCmd("o", "n", 1) }},
+		{"checkout/unavailable", notLocalBackend, func(m Model) tea.Cmd { return m.checkoutCmd("o", "n", 1) }},
+		{"openBrowser/ok", okBackend, func(m Model) tea.Cmd { return m.openBrowserCmd("o", "n", 1) }},
+		{"openBrowser/err", errBackend, func(m Model) tea.Cmd { return m.openBrowserCmd("o", "n", 1) }},
+		{"approve/ok", okBackend, func(m Model) tea.Cmd { return m.approveCmd("o", "n", 1) }},
+		{"approve/err", errBackend, func(m Model) tea.Cmd { return m.approveCmd("o", "n", 1) }},
+		{"merge/ok", okBackend, func(m Model) tea.Cmd { return m.mergeCmd("o", "n", 1) }},
+		{"merge/err", errBackend, func(m Model) tea.Cmd { return m.mergeCmd("o", "n", 1) }},
+		{"close/ok", okBackend, func(m Model) tea.Cmd { return m.closeCmd("o", "n", 1) }},
+		{"close/err", errBackend, func(m Model) tea.Cmd { return m.closeCmd("o", "n", 1) }},
+		{"fetchComments/ok", okBackend, func(m Model) tea.Cmd { return m.fetchCommentsCmd(1) }},
+		{"fetchComments/err", errBackend, func(m Model) tea.Cmd { return m.fetchCommentsCmd(1) }},
+		{"fetchDiff/ok", okBackend, func(m Model) tea.Cmd { return m.fetchDiffCmd(1) }},
+		{"fetchDiff/err", errBackend, func(m Model) tea.Cmd { return m.fetchDiffCmd(1) }},
+		{"fetchChecks/ok", okBackend, func(m Model) tea.Cmd { return m.fetchChecksCmd("o", "n") }},
+		{"fetchChecks/err", errBackend, func(m Model) tea.Cmd { return m.fetchChecksCmd("o", "n") }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := New(tt.backend, "o", "n", 100, 40, gen)
+			msg := tt.cmd(m)()
+			g, ok := msg.(screen.Generational)
+			if !ok {
+				t.Fatalf("%s: %T does not implement screen.Generational", tt.name, msg)
+			}
+			if g.Generation() != gen {
+				t.Fatalf("%s: Generation() = %d, want %d", tt.name, g.Generation(), gen)
+			}
+		})
+	}
+}
+
+func TestStatusMsgTargetView(t *testing.T) {
+	t.Parallel()
+	if (statusMsg{}).TargetView() != screen.ViewPR {
+		t.Fatal("statusMsg must target the PR view")
 	}
 }
