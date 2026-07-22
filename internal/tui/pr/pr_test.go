@@ -228,8 +228,8 @@ func TestViewRendersTabBar(t *testing.T) {
 			t.Fatalf("PR view missing tab label %q", label)
 		}
 	}
-	if !strings.Contains(v, "[1/2/3] Views") {
-		t.Fatalf("PR footer missing views hint:\n%s", v)
+	if !strings.Contains(v, "[?] help") {
+		t.Fatalf("PR footer missing help hint:\n%s", v)
 	}
 }
 
@@ -873,8 +873,8 @@ func TestViewNoResultsMessage(t *testing.T) {
 
 func TestViewFooterHasSearchHint(t *testing.T) {
 	t.Parallel()
-	if v := withTitledPRs("Fix cache", "Add docs").View(); !strings.Contains(v, "[/] Search") {
-		t.Fatalf("expected [/] Search hint in footer, got:\n%s", v)
+	if v := withTitledPRs("Fix cache", "Add docs").View(); !strings.Contains(v, "[/] search") {
+		t.Fatalf("expected [/] search hint in footer, got:\n%s", v)
 	}
 }
 
@@ -1222,19 +1222,6 @@ func TestFilterAndSearchBadgeRendered(t *testing.T) {
 	}
 }
 
-func TestFilterFooterHint(t *testing.T) {
-	t.Parallel()
-	m := withPRs(2)
-	if v := m.View(); !strings.Contains(v, "[m/v/d] Filter") {
-		t.Fatalf("expected filter footer hint, got:\n%s", v)
-	}
-	m.filter = filterMine
-	m.recompute()
-	if v := m.View(); !strings.Contains(v, "again clears") {
-		t.Fatalf("expected clear hint when a filter is active, got:\n%s", v)
-	}
-}
-
 func TestFilterEmptyStateMessage(t *testing.T) {
 	t.Parallel()
 	m := withWideFilteredPRs("octocat",
@@ -1390,13 +1377,6 @@ func TestCommentsTabErrorState(t *testing.T) {
 	m.updateViewportContent()
 	if v := m.View(); !strings.Contains(v, "Failed to load comments") || !strings.Contains(v, "network down") {
 		t.Fatalf("Comments tab missing error state:\n%s", v)
-	}
-}
-
-func TestFooterDocumentsTabKeys(t *testing.T) {
-	t.Parallel()
-	if v := withPRs(1).View(); !strings.Contains(v, "Tabs") {
-		t.Fatalf("footer missing tab hint:\n%s", v)
 	}
 }
 
@@ -1629,8 +1609,8 @@ func TestActionResultMsgTargetView(t *testing.T) {
 
 func TestFooterShowsActionHints(t *testing.T) {
 	t.Parallel()
-	if v := withPRs(1).View(); !strings.Contains(v, "[a/M/D] Approve/Merge/Close") {
-		t.Fatalf("footer missing action hints:\n%s", v)
+	if v := withPRs(1).View(); !strings.Contains(v, "[c] checkout") {
+		t.Fatalf("footer missing checkout hint:\n%s", v)
 	}
 }
 

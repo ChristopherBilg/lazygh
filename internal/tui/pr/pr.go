@@ -17,6 +17,7 @@ import (
 
 	"github.com/ChristopherBilg/lazygh/internal/fuzzy"
 	ghClient "github.com/ChristopherBilg/lazygh/internal/github"
+	"github.com/ChristopherBilg/lazygh/internal/tui/help"
 	"github.com/ChristopherBilg/lazygh/internal/tui/keys"
 	"github.com/ChristopherBilg/lazygh/internal/tui/nav"
 	"github.com/ChristopherBilg/lazygh/internal/tui/pr/diff"
@@ -994,7 +995,7 @@ func (m Model) View() string {
 	}
 
 	if m.fetchErr != nil && len(m.ctx.PRs) == 0 {
-		msg := styles.Error.Render(fmt.Sprintf("Failed to load PRs: %v (press r to retry)", m.fetchErr))
+		msg := styles.Error.Render(fmt.Sprintf("Failed to load PRs: %v (%s)", m.fetchErr, help.RetryHint()))
 		return fmt.Sprintf("%s\n\n  %s\n", nav.Bar(nav.TabPRs), styles.Truncate(msg, m.width))
 	}
 
@@ -1128,8 +1129,9 @@ func (m Model) renderList(paneWidth int) string {
 }
 
 // footer renders the hint bar for the current state: an impactful-action
-// confirmation prompt, search hints while typing, or otherwise the normal
-// action hints (with any transient status prefixed).
+// confirmation prompt, search hints while typing, or otherwise a short
+// binding-driven hint (with any transient status prefixed). The full keybinding
+// list lives in the ? help overlay.
 func (m Model) footer() string {
 	if m.confirm != confirmNone {
 		verb := "Merge"
@@ -1141,11 +1143,7 @@ func (m Model) footer() string {
 	if m.searching {
 		return fmt.Sprintf(" Search: %s  •  [esc] Cancel  •  [enter] Apply  •  [↑/↓] Move", m.query)
 	}
-	filterHint := "[m/v/d] Filter"
-	if m.filter != filterAll {
-		filterHint = "[m/v/d] Filter (again clears)"
-	}
-	footerText := fmt.Sprintf(" [1/2/3] Views  •  [esc] Repo  •  [tab] Focus  •  [[/]] Tabs  •  [j/k] Scroll  •  [/] Search  •  %s  •  [c] Checkout  •  [o] Web  •  [a/M/D] Approve/Merge/Close  •  [r] Refresh  •  [q] Quit", filterHint)
+	footerText := help.Footer(keys.Map.Search, keys.Map.Checkout, keys.Map.Help, keys.Map.Quit)
 	if status := m.statusLine(); status != "" {
 		footerText = fmt.Sprintf(" %s | %s", status, footerText)
 	}
@@ -1159,7 +1157,7 @@ func (m Model) statusLine() string {
 	case m.refreshing:
 		return fmt.Sprintf("%sRefreshing...", m.spinner.View())
 	case m.fetchErr != nil:
-		return styles.Truncate(styles.Error.Render(fmt.Sprintf("Refresh failed: %v (press r to retry)", m.fetchErr)), m.width)
+		return styles.Truncate(styles.Error.Render(fmt.Sprintf("Refresh failed: %v (%s)", m.fetchErr, help.RetryHint())), m.width)
 	case m.message != "":
 		return styles.Truncate(styles.Title.Render(m.message), m.width)
 	default:
