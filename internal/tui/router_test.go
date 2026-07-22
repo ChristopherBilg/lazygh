@@ -13,6 +13,7 @@ import (
 
 	"github.com/ChristopherBilg/lazygh/internal/config"
 	ghClient "github.com/ChristopherBilg/lazygh/internal/github"
+	"github.com/ChristopherBilg/lazygh/internal/tui/help"
 	"github.com/ChristopherBilg/lazygh/internal/tui/keys"
 	"github.com/ChristopherBilg/lazygh/internal/tui/repolist"
 	"github.com/ChristopherBilg/lazygh/internal/tui/screen"
@@ -438,5 +439,136 @@ func TestRepoListAddressedMsgNeverDroppedByGeneration(t *testing.T) {
 	m.Update(screen.FetchErrMsg{GenStamp: screen.GenStamp{Gen: 0}, View: screen.ViewRepoList, Err: errors.New("repo list refresh failed")})
 	if len(repoRec.got) != 1 {
 		t.Fatalf("repo-list fetch error dropped by generation guard: got %d, want 1", len(repoRec.got))
+	}
+}
+
+func TestHelpKeyOpensOverlay(t *testing.T) {
+	t.Parallel()
+	m := newTestModel()
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	if !updated.(Model).helpVisible {
+		t.Fatal("expected '?' to open the help overlay")
+	}
+}
+
+func TestHelpOverlayClosesOnEscAndQuestion(t *testing.T) {
+	t.Parallel()
+	m := newTestModel()
+	opened, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	closed, _ := opened.(Model).Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if closed.(Model).helpVisible {
+		t.Fatal("expected esc to close the help overlay")
+	}
+	reopened, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	toggled, _ := reopened.(Model).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	if toggled.(Model).helpVisible {
+		t.Fatal("expected '?' to toggle the help overlay closed")
+	}
+}
+
+func TestHelpOverlaySwallowsKeysAndDoesNotForward(t *testing.T) {
+	t.Parallel()
+	rec := &recorderScreen{}
+	m := Model{active: viewPR, helpVisible: true, perRepo: map[view]screen.Model{viewPR: rec}}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	um := updated.(Model)
+	if !um.helpVisible {
+		t.Fatal("a non-close key must keep the overlay open")
+	}
+	if um.active != viewPR {
+		t.Fatal("view must not change while the overlay is open")
+	}
+	if len(rec.got) != 0 {
+		t.Fatalf("overlay must swallow keys; screen received %d", len(rec.got))
+	}
+}
+
+func TestHelpOverlayQuits(t *testing.T) {
+	t.Parallel()
+	m := Model{active: viewRepoList, helpVisible: true}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	if cmd == nil {
+		t.Fatal("expected 'q' to quit from the overlay")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatal("expected tea.Quit from the overlay")
+	}
+}
+
+func TestHelpNotOpenedWhileCapturing(t *testing.T) {
+	t.Parallel()
+	cs := &capturingScreen{capturing: true}
+	m := Model{active: viewPR, perRepo: map[view]screen.Model{viewPR: cs}}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	if updated.(Model).helpVisible {
+		t.Fatal("'?' must not open help while a screen is capturing input")
+	}
+	if len(cs.got) != 1 || cs.got[0] != "?" {
+		t.Fatalf("'?' must be forwarded to the capturing screen; got %v", cs.got)
+	}
+}
+
+func TestHelpOverlayViewIsContextual(t *testing.T) {
+	t.Parallel()
+	rl := Model{active: viewRepoList, helpVisible: true, width: 80, height: 40}
+	if v := rl.View(); !strings.Contains(v, "Repositories") || strings.Contains(v, "checkout") {
+		t.Fatalf("repo-list overlay not contextual:\n%s", v)
+	}
+}
+
+func TestErrorOverlayWinsOverHelp(t *testing.T) {
+	t.Parallel()
+	m := Model{err: errors.New("boom"), helpVisible: true, width: 80, height: 40}
+	if v := m.View(); !strings.Contains(v, "Error: boom") {
+		t.Fatalf("fatal error overlay must take precedence over help:\n%s", v)
+	}
+}
+
+func TestHelpOverlayScrolls(t *testing.T) {
+	t.Parallel()
+	m := Model{active: viewPR, helpVisible: true, width: 80, height: 6}
+	down, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if down.(Model).helpScroll != 1 {
+		t.Fatalf("expected Down to scroll help to offset 1, got %d", down.(Model).helpScroll)
+	}
+	up, _ := down.(Model).Update(tea.KeyMsg{Type: tea.KeyUp})
+	if up.(Model).helpScroll != 0 {
+		t.Fatalf("expected Up to scroll help back to 0, got %d", up.(Model).helpScroll)
+	}
+}
+
+func TestHelpOverlayScrollClampedAtZero(t *testing.T) {
+	t.Parallel()
+	m := Model{active: viewPR, helpVisible: true, width: 80, height: 6}
+	up, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if up.(Model).helpScroll != 0 {
+		t.Fatalf("scroll must not go below 0, got %d", up.(Model).helpScroll)
+	}
+}
+
+func TestHelpOverlayScrollClampedAtMax(t *testing.T) {
+	t.Parallel()
+	m := Model{active: viewPR, helpVisible: true, width: 80, height: 6}
+	for range 100 {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = updated.(Model)
+	}
+	if want := help.MaxScroll(viewPR, 6); m.helpScroll != want {
+		t.Fatalf("helpScroll = %d, want clamped to MaxScroll %d", m.helpScroll, want)
+	}
+}
+
+func TestHelpOverlayScrollReclampedOnResize(t *testing.T) {
+	t.Parallel()
+	// Scroll to the bottom at a short height, then grow the terminal: the stored
+	// offset must be reclamped so the first Up press after resize isn't swallowed.
+	m := Model{active: viewPR, helpVisible: true, width: 80, height: 6, repoList: &recorderScreen{}}
+	for range 100 {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = updated.(Model)
+	}
+	resized, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	if got, want := resized.(Model).helpScroll, help.MaxScroll(viewPR, 12); got != want {
+		t.Fatalf("after resize, helpScroll = %d, want reclamped to %d", got, want)
 	}
 }

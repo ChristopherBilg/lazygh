@@ -10,7 +10,7 @@ import (
 )
 
 func TestRenderShowsTitleAndBindings(t *testing.T) {
-	out := Render(screen.ViewPR, 80, 40)
+	out := Render(screen.ViewPR, 80, 40, 0)
 	for _, want := range []string{"Pull Requests", "checkout", "approve pr", "close pr", "quit"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("PR help render missing %q:\n%s", want, out)
@@ -19,7 +19,7 @@ func TestRenderShowsTitleAndBindings(t *testing.T) {
 }
 
 func TestRenderContextualRepoList(t *testing.T) {
-	out := Render(screen.ViewRepoList, 80, 40)
+	out := Render(screen.ViewRepoList, 80, 40, 0)
 	if strings.Contains(out, "checkout") {
 		t.Errorf("repo-list help must not show 'checkout':\n%s", out)
 	}
@@ -33,14 +33,14 @@ func TestRenderReflectsRemappedKey(t *testing.T) {
 	kc := config.Default().Keys
 	kc.Checkout = []string{"x"}
 	keys.Configure(kc)
-	out := Render(screen.ViewPR, 80, 40)
+	out := Render(screen.ViewPR, 80, 40, 0)
 	if !strings.Contains(out, "x") || !strings.Contains(out, "checkout") {
 		t.Errorf("expected remapped checkout key in help:\n%s", out)
 	}
 }
 
 func TestRenderScrollsWhenTooShort(t *testing.T) {
-	if out := Render(screen.ViewPR, 80, 3); out == "" {
+	if out := Render(screen.ViewPR, 80, 3, 0); out == "" {
 		t.Fatal("expected non-empty help render even when very short")
 	}
 }
@@ -50,7 +50,7 @@ func TestRenderScrollsWhenTooShort(t *testing.T) {
 // Center would center each line individually and drift the key column per row;
 // left-aligning the block keeps the columns lined up.
 func TestRenderBindingRowsShareLeftIndent(t *testing.T) {
-	out := Render(screen.ViewPR, 80, 40)
+	out := Render(screen.ViewPR, 80, 40, 0)
 	short := leadingSpaces(t, out, "checkout")
 	long := leadingSpaces(t, out, "needs my review")
 	if short != long {
@@ -67,7 +67,7 @@ func TestRenderCloseHintReflectsRemappedKeys(t *testing.T) {
 	kc.Help = []string{"H"}
 	kc.Back = []string{"B"}
 	keys.Configure(kc)
-	out := Render(screen.ViewPR, 80, 40)
+	out := Render(screen.ViewPR, 80, 40, 0)
 	if !strings.Contains(out, "H / B  close") {
 		t.Errorf("close hint should reflect remapped help/back keys:\n%s", out)
 	}
@@ -84,4 +84,24 @@ func leadingSpaces(t *testing.T, out, sub string) int {
 	}
 	t.Fatalf("no line containing %q in:\n%s", sub, out)
 	return -1
+}
+
+func TestMaxScrollZeroWhenFits(t *testing.T) {
+	if got := MaxScroll(screen.ViewRepoList, 40); got != 0 {
+		t.Errorf("MaxScroll(repo list, 40) = %d, want 0 (content fits)", got)
+	}
+}
+
+func TestMaxScrollPositiveWhenTall(t *testing.T) {
+	if got := MaxScroll(screen.ViewPR, 5); got <= 0 {
+		t.Errorf("MaxScroll(PR, 5) = %d, want > 0 (content taller than 5 rows)", got)
+	}
+}
+
+func TestRenderScrollShowsLaterContent(t *testing.T) {
+	top := Render(screen.ViewPR, 80, 6, 0)
+	scrolled := Render(screen.ViewPR, 80, 6, MaxScroll(screen.ViewPR, 6))
+	if top == scrolled {
+		t.Fatal("scrolling the help viewport should change the visible content")
+	}
 }
