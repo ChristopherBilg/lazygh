@@ -38,9 +38,12 @@ type Addressed interface {
 // Generational is implemented by addressed messages that carry the model
 // generation under which their command was issued. The router drops a
 // Generational message whose generation no longer matches the current repo
-// selection: its target view has been rebuilt for a different repository, so the
-// result is stale (issue #46). Messages without a generation (e.g. the
-// persistent repo list's own results) are never dropped.
+// selection: its target per-repo view has been rebuilt for a different
+// repository, so the result is stale (issue #46). A per-repo view's async
+// messages must embed GenStamp to be guarded this way. The repo list is
+// persistent (never rebuilt), so its results are exempt: reposMsg is not
+// Generational, and its FetchErrMsg (which is, at generation 0) is skipped by
+// the router's explicit viewRepoList exemption.
 type Generational interface {
 	Generation() uint64
 }
