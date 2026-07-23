@@ -10,7 +10,7 @@ import (
 func TestViewShowsPlaceholderAndTabs(t *testing.T) {
 	m := New(100, 40)
 	v := m.View()
-	for _, want := range []string{"Actions", "Coming soon", "Pull Requests", "Issues"} {
+	for _, want := range []string{"Actions", "Coming soon", "Pull Requests", "Issues", "[?] help"} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("view missing %q:\n%s", want, v)
 		}
