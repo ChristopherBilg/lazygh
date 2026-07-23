@@ -68,6 +68,7 @@ their defaults. All keys are optional.
 | `nav_actions` | `3` | global |
 | `prev_tab` | `[` | PR view (previous detail tab) |
 | `next_tab` | `]` | PR view (next detail tab) |
+| `help` | `?` | global (open the contextual keybindings overlay) |
 
 Key names use Bubble Tea's vocabulary: printable characters (`c`, `o`, `/`),
 named keys (`enter`, `esc`, `tab`, `shift+tab`, `up`, `down`, `backspace`,
@@ -81,10 +82,10 @@ named keys (`enter`, `esc`, `tab`, `shift+tab`, `up`, `down`, `backspace`,
 - **Conflicts are your responsibility.** If two actions share a key, the global
   actions (quit/back/nav) win over view actions, and otherwise the first match in
   code order wins. lazygh does not warn about conflicts.
-- **On-screen hint bars show the default keys.** The footer hints and the error
-  overlay currently display the built-in keys even after you remap; they don't yet
-  reflect your bindings (a contextual help overlay is planned). Your remapped keys
-  still work — only the on-screen labels lag.
+- **On-screen hints reflect your bindings.** Footer hints and the "press … to
+  retry" error messages render your configured keys, and pressing `?` (the
+  `help` key) opens a contextual keybindings overlay that lists every action
+  available on the current screen.
 
 ```yaml
 keys:
@@ -126,7 +127,7 @@ github:
   repo_page_size: 50       # repos per page request; up to 20 pages loaded (1–100)
 keys:
   checkout: [c, x]         # remap / add keys; single key or a list
-  # ...any of: quit, back, up, down, select, refresh, toggle_pane, open, approve, merge, close, search, filter_mine, filter_review, filter_dependabot, nav_prs, nav_issues, nav_actions, prev_tab, next_tab
+  # ...any of: quit, back, up, down, select, refresh, toggle_pane, open, approve, merge, close, search, filter_mine, filter_review, filter_dependabot, nav_prs, nav_issues, nav_actions, prev_tab, next_tab, help
 theme:
   accent: "205"            # ANSI-256 index or quoted hex like "#7D56F4"
   selected: "#ff8800"
