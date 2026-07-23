@@ -19,6 +19,12 @@ import (
 	"github.com/ChristopherBilg/lazygh/internal/tui/styles"
 )
 
+// reservedRows is the vertical chrome around the repository rows: the leading
+// blank line, the "Select a Repository" title and its blank line, the Menu box
+// border and padding, the scroll-indicator line and its blank line, and the
+// footer with its leading gap. capacity subtracts it from the terminal height.
+const reservedRows = 12
+
 // Backend is the subset of the github client the repo-list screen needs.
 type Backend interface {
 	Repositories(ctx context.Context, force bool) ([]ghClient.Repository, error)
@@ -209,4 +215,45 @@ func (m Model) footer() string {
 	default:
 		return hints
 	}
+}
+
+// capacity returns how many repository rows fit in the current window, always at
+// least 1 so the highlighted row and the scroll indicator stay usable even on
+// very short terminals.
+func (m Model) capacity() int {
+	return max(m.height-reservedRows, 1)
+}
+
+// clampTop returns the scroll offset (index of the first visible row) that keeps
+// cursor within the visible window [top, top+capacity) while scrolling the
+// minimum distance from the current top. It never scrolls past the end of the
+// list, so the window stays full when the list is longer than capacity.
+func clampTop(top, cursor, total, capacity int) int {
+	if capacity < 1 {
+		capacity = 1
+	}
+	switch {
+	case cursor < top:
+		top = cursor
+	case cursor >= top+capacity:
+		top = cursor - capacity + 1
+	}
+	if maxTop := max(total-capacity, 0); top > maxTop {
+		top = maxTop
+	}
+	return max(top, 0)
+}
+
+// scrollIndicator renders a compact "x–y of N" counter for the visible window
+// [top, end) over total rows, with up/down arrows shown only when there is
+// content scrolled off above or below.
+func scrollIndicator(top, end, total int) string {
+	up, down := " ", " "
+	if top > 0 {
+		up = "↑"
+	}
+	if end < total {
+		down = "↓"
+	}
+	return fmt.Sprintf("%s %d–%d of %d %s", up, top+1, end, total, down)
 }

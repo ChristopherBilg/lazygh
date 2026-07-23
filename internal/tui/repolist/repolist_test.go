@@ -248,3 +248,71 @@ func TestDefaultFooterShowsHints(t *testing.T) {
 		t.Fatalf("expected default footer hints, got:\n%s", v)
 	}
 }
+
+func TestClampTop(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name                               string
+		top, cursor, total, capacity, want int
+	}{
+		{"list fits, cursor at top", 0, 0, 5, 12, 0},
+		{"cursor within window, no scroll", 3, 5, 50, 12, 3},
+		{"cursor above window pulls up", 10, 4, 50, 12, 4},
+		{"cursor below window pulls down", 0, 20, 50, 12, 9},
+		{"cursor at last pins window to end", 0, 49, 50, 12, 38},
+		{"never scrolls past end", 45, 49, 50, 12, 38},
+		{"total shorter than capacity clamps to 0", 5, 2, 3, 12, 0},
+		{"capacity below 1 treated as 1", 0, 7, 50, 0, 7},
+		{"negative top clamped to 0", -3, 0, 50, 12, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := clampTop(tt.top, tt.cursor, tt.total, tt.capacity); got != tt.want {
+				t.Fatalf("clampTop(%d,%d,%d,%d) = %d, want %d",
+					tt.top, tt.cursor, tt.total, tt.capacity, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCapacityClampsToAtLeastOne(t *testing.T) {
+	t.Parallel()
+	tests := []struct{ height, want int }{
+		{24, 12}, {13, 1}, {12, 1}, {0, 1}, {100, 88},
+	}
+	for _, tt := range tests {
+		if got := (Model{height: tt.height}).capacity(); got != tt.want {
+			t.Errorf("capacity(height=%d) = %d, want %d", tt.height, got, tt.want)
+		}
+	}
+}
+
+func TestScrollIndicator(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name             string
+		top, end, total  int
+		wantSub          string
+		wantUp, wantDown bool
+	}{
+		{"at top has down only", 0, 12, 50, "1–12 of 50", false, true},
+		{"in middle has both", 10, 22, 50, "11–22 of 50", true, true},
+		{"at bottom has up only", 38, 50, 50, "39–50 of 50", true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := scrollIndicator(tt.top, tt.end, tt.total)
+			if !strings.Contains(got, tt.wantSub) {
+				t.Fatalf("scrollIndicator = %q, want substring %q", got, tt.wantSub)
+			}
+			if up := strings.Contains(got, "↑"); up != tt.wantUp {
+				t.Errorf("up arrow = %v, want %v (got %q)", up, tt.wantUp, got)
+			}
+			if down := strings.Contains(got, "↓"); down != tt.wantDown {
+				t.Errorf("down arrow = %v, want %v (got %q)", down, tt.wantDown, got)
+			}
+		})
+	}
+}
