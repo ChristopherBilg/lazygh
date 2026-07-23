@@ -11,6 +11,7 @@ import (
 
 	ghClient "github.com/ChristopherBilg/lazygh/internal/github"
 	"github.com/ChristopherBilg/lazygh/internal/tui/action"
+	"github.com/ChristopherBilg/lazygh/internal/tui/help"
 	"github.com/ChristopherBilg/lazygh/internal/tui/issue"
 	"github.com/ChristopherBilg/lazygh/internal/tui/keys"
 	"github.com/ChristopherBilg/lazygh/internal/tui/pr"
@@ -43,12 +44,15 @@ var perRepoViews = []view{viewPR, viewIssues, viewActions}
 // Model is the root router. It owns only routing state: the injected GitHub
 // client (threaded into each screen that needs it), the active view, the
 // repository-selection screen, the per-repo screens (kept alive so switching
-// between them preserves each one's selection and scroll position), the sticky
-// global error, and the window dimensions it propagates.
+// between them preserves each one's selection and scroll position), the modal
+// help overlay's visibility and scroll offset, the sticky global error, and the
+// window dimensions it propagates.
 type Model struct {
-	client   *ghClient.Client // injected github client; satisfies repolist.Backend and pr.Backend
-	active   view
-	repoList screen.Model // persistent: survives back-navigation so the cursor is retained
+	client      *ghClient.Client // injected github client; satisfies repolist.Backend and pr.Backend
+	active      view
+	helpVisible bool         // the contextual keybindings overlay (?) is open
+	helpScroll  int          // vertical scroll offset while the overlay is open
+	repoList    screen.Model // persistent: survives back-navigation so the cursor is retained
 	// perRepo holds the per-repo screens (pr/issue/action), built on selection
 	// and kept alive so switching preserves each screen's state. It is mutated in
 	// place via map-reference semantics; do not clone Model and expect
@@ -88,6 +92,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "ctrl+c" { // safety hatch: always quits, before any configurable match
 			return m, tea.Quit
 		}
+		// The help overlay is modal: while open it swallows every key except its
+		// own scroll keys, close keys (help/back), and quit — nothing reaches the
+		// screen beneath.
+		if m.helpVisible {
+			switch {
+			case key.Matches(msg, keys.Map.Quit):
+				return m, tea.Quit
+			case key.Matches(msg, keys.Map.Help), key.Matches(msg, keys.Map.Back):
+				m.helpVisible = false
+				m.helpScroll = 0
+			case key.Matches(msg, keys.Map.Up):
+				m.helpScroll = max(m.helpScroll-1, 0)
+			case key.Matches(msg, keys.Map.Down):
+				m.helpScroll = min(m.helpScroll+1, help.MaxScroll(m.active, m.height))
+			}
+			return m, nil
+		}
 		// While the active screen is capturing text input (e.g. the PR title
 		// filter), forward every key to it so keystrokes like "1", "q", or "esc"
 		// are typed into the field instead of switching views, quitting, or going
@@ -98,6 +119,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		switch {
+		case key.Matches(msg, keys.Map.Help):
+			m.helpVisible = true
+			m.helpScroll = 0
+			return m, nil
 		case key.Matches(msg, keys.Map.Quit):
 			return m, tea.Quit
 		case key.Matches(msg, keys.Map.Back):
@@ -129,6 +154,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		// Keep the overlay's scroll offset in range when the terminal grows, so a
+		// post-resize Up press isn't swallowed re-counting down from a stale offset.
+		if m.helpVisible {
+			m.helpScroll = min(m.helpScroll, help.MaxScroll(m.active, m.height))
+		}
 		return m.broadcastResize(msg)
 
 	case repolist.RepoSelectedMsg:
@@ -232,6 +262,10 @@ func (m Model) broadcastResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 func (m Model) View() string {
 	if m.err != nil {
 		return fmt.Sprintf("\n  Error: %v\n\n  Press ctrl+c to quit.\n", m.err)
+	}
+
+	if m.helpVisible {
+		return help.Render(m.active, m.width, m.height, m.helpScroll)
 	}
 
 	if m.active == viewRepoList {

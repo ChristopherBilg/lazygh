@@ -76,9 +76,10 @@ Bringing the rest of the daily GitHub workflow into the terminal.
 ## Epic 4: UX Polish & Accessibility
 Ensuring the tool feels exactly like `lazygit` and is immediately intuitive to new users.
 
-* **Dynamic Help Overlay:**
-    * Implement `bubbles/help`.
-    * Map `?` to trigger a modal overlay that displays all available keybindings contextually (e.g., showing PR-specific keys only when the PR pane is active).
+* **Dynamic Help Overlay** — ✅ Implemented (#53):
+    * Built a dedicated `internal/tui/help` package as the single source of truth for on-screen key labels (rather than `bubbles/help`).
+    * `?` opens a modal overlay that lists the current screen's keybindings contextually (PR-specific keys only on the PR view, etc.).
+    * Footer hints, the tab-bar key hints, and the "press … to retry" error messages all render from the configured bindings, so remapped keys are reflected everywhere.
 * **Global Status Bar:**
     * Pin a robust status bar to the bottom of the screen.
     * Display current repository, active branch, GitHub API rate limit status, and application version.

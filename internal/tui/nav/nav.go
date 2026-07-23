@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ChristopherBilg/lazygh/internal/tui/keys"
 	"github.com/ChristopherBilg/lazygh/internal/tui/styles"
 )
 
@@ -33,11 +34,24 @@ var labels = [...]string{
 func Bar(active Tab) string {
 	segments := make([]string, len(labels))
 	for i, label := range labels {
-		segment := fmt.Sprintf("%d %s", i+1, label)
+		segment := fmt.Sprintf("%s %s", keyFor(Tab(i)), label)
 		if Tab(i) == active {
 			segment = styles.Title.Render(segment)
 		}
 		segments[i] = segment
 	}
 	return " " + strings.Join(segments, "   ")
+}
+
+// keyFor returns the configured key that switches to tab t, so the bar's hints
+// track the user's nav bindings instead of a hardcoded ordinal.
+func keyFor(t Tab) string {
+	switch t {
+	case TabIssues:
+		return keys.Map.NavIssues.Help().Key
+	case TabActions:
+		return keys.Map.NavActions.Help().Key
+	default: // TabPRs
+		return keys.Map.NavPRs.Help().Key
+	}
 }

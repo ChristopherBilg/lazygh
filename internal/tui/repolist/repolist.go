@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	ghClient "github.com/ChristopherBilg/lazygh/internal/github"
+	"github.com/ChristopherBilg/lazygh/internal/tui/help"
 	"github.com/ChristopherBilg/lazygh/internal/tui/keys"
 	"github.com/ChristopherBilg/lazygh/internal/tui/screen"
 	"github.com/ChristopherBilg/lazygh/internal/tui/styles"
@@ -161,7 +162,7 @@ func (m Model) View() string {
 	}
 
 	if m.fetchErr != nil && len(m.repos) == 0 {
-		msg := styles.Error.Render(fmt.Sprintf("Failed to load repositories: %v (press r to retry)", m.fetchErr))
+		msg := styles.Error.Render(fmt.Sprintf("Failed to load repositories: %v (%s)", m.fetchErr, help.RetryHint()))
 		return fmt.Sprintf("\n  %s\n", styles.Truncate(msg, m.width))
 	}
 
@@ -197,14 +198,14 @@ func (m Model) View() string {
 }
 
 // footer renders the hint bar, or a refresh spinner / non-fatal refresh error
-// when one is active.
+// when one is active. The full keybinding list lives in the ? help overlay.
 func (m Model) footer() string {
-	hints := " [j/k] Navigate  •  [enter] Select  •  [r] Refresh  •  [q] Quit"
+	hints := help.Footer(keys.Map.Select, keys.Map.Refresh, keys.Map.Help, keys.Map.Quit)
 	switch {
 	case m.refreshing:
 		return fmt.Sprintf(" %sRefreshing...  %s", m.spinner.View(), hints)
 	case m.fetchErr != nil:
-		return styles.Truncate(styles.Error.Render(fmt.Sprintf(" Refresh failed: %v (press r to retry)", m.fetchErr)), m.width)
+		return styles.Truncate(styles.Error.Render(fmt.Sprintf(" Refresh failed: %v (%s)", m.fetchErr, help.RetryHint())), m.width)
 	default:
 		return hints
 	}

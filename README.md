@@ -82,6 +82,7 @@ These are the defaults; every action can be remapped via configuration (see belo
 |---|---|
 | `1` / `2` / `3` | Switch to Pull Requests / Issues / Actions (once a repo is selected) |
 | `esc`, `backspace` | Back to the repository list |
+| `?` | Open the contextual keybindings overlay (shows the current screen's keys) |
 | `q`, `ctrl+c` | Quit (`ctrl+c` always quits and can't be remapped away) |
 
 **Repository list**

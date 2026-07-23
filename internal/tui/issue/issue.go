@@ -8,6 +8,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/ChristopherBilg/lazygh/internal/tui/help"
+	"github.com/ChristopherBilg/lazygh/internal/tui/keys"
 	"github.com/ChristopherBilg/lazygh/internal/tui/nav"
 	"github.com/ChristopherBilg/lazygh/internal/tui/screen"
 	"github.com/ChristopherBilg/lazygh/internal/tui/styles"
@@ -43,7 +45,7 @@ func (m Model) View() string {
 	panel := styles.Menu.Width(m.width / 2).Render(
 		fmt.Sprintf("%s\n\nComing soon — tracked under Epic 3.", styles.Title.Render("Issues")),
 	)
-	footer := " [1/2/3] Views  •  [esc] Repo  •  [q] Quit"
+	footer := help.Footer(keys.Map.Help, keys.Map.Quit)
 	return fmt.Sprintf(
 		"%s\n\n%s\n\n%s",
 		nav.Bar(nav.TabIssues),

@@ -11,6 +11,7 @@ import (
 // KeyMap is the set of bindings used across the TUI.
 type KeyMap struct {
 	Quit             key.Binding
+	Help             key.Binding
 	Back             key.Binding
 	Up               key.Binding
 	Down             key.Binding
@@ -43,12 +44,14 @@ func Configure(kc config.KeysConfig) { Map = newKeyMap(kc) }
 func newKeyMap(kc config.KeysConfig) KeyMap {
 	// b is safe to call with each action's list: Default() supplies a non-empty
 	// list for every action and applyKeys only overwrites with a non-empty list,
-	// so keys[0] never panics. WithHelp labels feed a future help overlay.
+	// so keys[0] never panics. WithHelp labels feed the help overlay
+	// (internal/tui/help) and the binding-driven footer hints.
 	b := func(keys []string, help string) key.Binding {
 		return key.NewBinding(key.WithKeys(keys...), key.WithHelp(keys[0], help))
 	}
 	return KeyMap{
 		Quit:             b(kc.Quit, "quit"),
+		Help:             b(kc.Help, "help"),
 		Back:             b(kc.Back, "back"),
 		Up:               b(kc.Up, "up"),
 		Down:             b(kc.Down, "down"),

@@ -3,6 +3,9 @@ package nav
 import (
 	"strings"
 	"testing"
+
+	"github.com/ChristopherBilg/lazygh/internal/config"
+	"github.com/ChristopherBilg/lazygh/internal/tui/keys"
 )
 
 func TestBarContainsAllTabLabels(t *testing.T) {
@@ -32,5 +35,22 @@ func TestBarHighlightDependsOnActiveTab(t *testing.T) {
 	actions := Bar(TabActions)
 	if prs == issues || prs == actions || issues == actions {
 		t.Fatalf("expected distinct bars per active tab; got prs=%q issues=%q actions=%q", prs, issues, actions)
+	}
+}
+
+func TestBarReflectsRemappedNavKey(t *testing.T) {
+	// The tab-bar key hints must track the configured nav bindings, not a
+	// hardcoded ordinal — remapping nav_prs should change the bar's PR hint.
+	t.Cleanup(func() { keys.Configure(config.Default().Keys) })
+	kc := config.Default().Keys
+	kc.NavPRs = []string{"p"}
+	keys.Configure(kc)
+
+	bar := Bar(TabPRs)
+	if !strings.Contains(bar, "p Pull Requests") {
+		t.Fatalf("bar should show the remapped nav key, got: %q", bar)
+	}
+	if strings.Contains(bar, "1 Pull Requests") {
+		t.Fatalf("bar should not show the old default nav key after remap, got: %q", bar)
 	}
 }
