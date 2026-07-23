@@ -244,7 +244,7 @@ func TestDefaultFooterShowsHints(t *testing.T) {
 	t.Parallel()
 	m := loaded(2)
 	v := m.View()
-	if !strings.Contains(v, "Navigate") || !strings.Contains(v, "Refresh") {
+	if !strings.Contains(v, "refresh") || !strings.Contains(v, "[?] help") {
 		t.Fatalf("expected default footer hints, got:\n%s", v)
 	}
 }
