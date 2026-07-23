@@ -942,9 +942,13 @@ func descriptionContent(pr ghClient.PullRequest) string {
 	return fmt.Sprintf("%s\nState: %s\n\n%s", styles.Title.Render(pr.Title), pr.State, body)
 }
 
+// dividerRune is the box-drawing character repeated to form the full-width
+// horizontal rule drawn between consecutive comments in the Comments tab.
+const dividerRune = "─"
+
 // renderComments renders the Comments tab for the given PR from its cached load
 // state: a loading placeholder, an in-tab error, an empty state, or the thread in
-// API (chronological, reading) order.
+// API (chronological, reading) order, with a full-width rule between comments.
 func (m Model) renderComments(prNumber int) string {
 	st := m.comments[prNumber]
 	switch st.status {
@@ -955,9 +959,10 @@ func (m Model) renderComments(prNumber int) string {
 			return "No comments yet."
 		}
 		var b strings.Builder
+		divider := styles.Divider.Render(strings.Repeat(dividerRune, max(m.viewport.Width, 1)))
 		for i, c := range st.list {
 			if i > 0 {
-				b.WriteString("\n\n")
+				b.WriteString("\n\n" + divider + "\n\n")
 			}
 			fmt.Fprintf(&b, "%s · %s\n%s",
 				styles.Title.Render(c.User.Login),
