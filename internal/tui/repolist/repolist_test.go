@@ -360,7 +360,7 @@ func TestViewScrollsToKeepSelectionVisible(t *testing.T) {
 
 func TestViewNoIndicatorWhenListFits(t *testing.T) {
 	t.Parallel()
-	m := loaded(5) // capacity 12 > 5
+	m := loaded(5) // capacity 11 > 5
 	v := m.View()
 	if strings.Contains(v, " of ") || strings.Contains(v, "...and") {
 		t.Fatalf("expected no scroll indicator when the list fits, got:\n%s", v)

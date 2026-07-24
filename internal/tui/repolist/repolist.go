@@ -53,6 +53,13 @@ type Model struct {
 	filtered   []int  // indices into repos, in ranked display order
 }
 
+// var _ screen.InputCapturer = Model{} asserts, at compile time, that Model
+// satisfies InputCapturer with a value receiver. The router stores screens as
+// screen.Model values, so if CapturingInput ever became a pointer-receiver
+// method, this line would fail to compile instead of silently breaking the
+// suppression of global keys while searching.
+var _ screen.InputCapturer = Model{}
+
 // New returns a repository-selection screen in its initial loading state,
 // backed by the given github client.
 func New(backend Backend) Model {
