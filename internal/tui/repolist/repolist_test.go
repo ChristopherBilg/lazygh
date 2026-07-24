@@ -283,7 +283,7 @@ func TestClampTop(t *testing.T) {
 func TestCapacityClampsToAtLeastOne(t *testing.T) {
 	t.Parallel()
 	tests := []struct{ height, want int }{
-		{24, 12}, {13, 1}, {12, 1}, {0, 1}, {100, 88},
+		{24, 11}, {13, 1}, {12, 1}, {0, 1}, {100, 87},
 	}
 	for _, tt := range tests {
 		if got := (Model{height: tt.height}).capacity(); got != tt.want {
@@ -431,15 +431,15 @@ func TestViewScrollUpKeepsSelectionVisible(t *testing.T) {
 
 func TestViewResizeLargerShowsMoreRows(t *testing.T) {
 	t.Parallel()
-	m := downTo(t, loaded(50), 49)                                   // cursor 49, top 38 at height 24 (capacity 12)
-	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40}) // capacity → 28
+	m := downTo(t, loaded(50), 49)                                   // cursor 49, top 38 at height 24 (capacity 11)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40}) // capacity → 27
 	m = updated.(Model)
 	v := m.View()
 	if !strings.Contains(v, "> o/r49") {
 		t.Fatalf("expected selection still visible after enlarging, got:\n%s", v)
 	}
-	if !strings.Contains(v, "o/r22") {
-		t.Fatalf("expected more rows revealed above when enlarged (top row r22), got:\n%s", v)
+	if !strings.Contains(v, "o/r23") {
+		t.Fatalf("expected more rows revealed above when enlarged (top row r23), got:\n%s", v)
 	}
 }
 
@@ -690,5 +690,81 @@ func TestCapturingInputFalseWhenIdle(t *testing.T) {
 	t.Parallel()
 	if loaded(2).CapturingInput() {
 		t.Fatal("expected CapturingInput()=false when not searching")
+	}
+}
+
+func TestViewSearchingShowsQueryAndHints(t *testing.T) {
+	t.Parallel()
+	m := typeRunes(enterSearch(t, named("o/cache", "o/docs")), "cache")
+	v := m.View()
+	if !strings.Contains(v, "cache") {
+		t.Fatalf("expected the typed query in the view:\n%s", v)
+	}
+	if !strings.Contains(v, "Cancel") || !strings.Contains(v, "Apply") {
+		t.Fatalf("expected search footer hints while typing:\n%s", v)
+	}
+}
+
+func TestViewCommittedShowsFilterBadge(t *testing.T) {
+	t.Parallel()
+	m := typeRunes(enterSearch(t, named("o/cache", "o/docs")), "cache")
+	ent, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	v := ent.(Model).View()
+	if !strings.Contains(v, `filter: "cache"`) {
+		t.Fatalf("expected filter badge, got:\n%s", v)
+	}
+	if !strings.Contains(v, "(1/2)") {
+		t.Fatalf("expected filter count (1/2), got:\n%s", v)
+	}
+}
+
+func TestViewNoResultsMessage(t *testing.T) {
+	t.Parallel()
+	m := typeRunes(enterSearch(t, named("o/cache", "o/docs")), "zzzzz")
+	if v := m.View(); !strings.Contains(v, "No repositories match") {
+		t.Fatalf("expected a no-results message, got:\n%s", v)
+	}
+}
+
+func TestViewCommittedZeroMatchesShowsBadgeAndNoResults(t *testing.T) {
+	t.Parallel()
+	m := typeRunes(enterSearch(t, named("o/cache", "o/docs")), "zzz")
+	ent, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	v := ent.(Model).View()
+	if !strings.Contains(v, `filter: "zzz" (0/2)`) {
+		t.Fatalf("expected badge with 0/2, got:\n%s", v)
+	}
+	if !strings.Contains(v, "No repositories match") {
+		t.Fatalf("expected no-results message with badge, got:\n%s", v)
+	}
+}
+
+func TestViewFooterHasSearchHint(t *testing.T) {
+	t.Parallel()
+	if v := named("o/cache", "o/docs").View(); !strings.Contains(v, "[/] search") {
+		t.Fatalf("expected [/] search hint in footer, got:\n%s", v)
+	}
+}
+
+func TestSearchingScrollWindowKeepsSelectionVisible(t *testing.T) {
+	t.Parallel()
+	// height 24 → capacity 11 with the filter line reserved. Navigating to the last
+	// repo while searching must keep it visible and scroll the first off-screen.
+	m := downTo(t, enterSearch(t, loaded(50)), 49)
+	if m.cursor != 49 {
+		t.Fatalf("cursor = %d, want 49", m.cursor)
+	}
+	v := m.View()
+	if !strings.Contains(v, "> o/r49") {
+		t.Fatalf("expected the last repo selected and visible while searching, got:\n%s", v)
+	}
+	if !strings.Contains(v, "Cancel") {
+		t.Fatalf("expected the search footer (still searching) in the view, got:\n%s", v)
+	}
+	if strings.Contains(v, "o/r0") {
+		t.Fatalf("expected the first repo scrolled off-screen, got:\n%s", v)
+	}
+	if !strings.Contains(v, "of 50") {
+		t.Fatalf("expected scroll indicator 'of 50', got:\n%s", v)
 	}
 }

@@ -22,12 +22,13 @@ import (
 )
 
 // reservedRows is the vertical chrome around the repository rows: the leading
-// blank line, the title and its blank line, the Menu box border and padding,
-// the scroll-indicator line and its blank line, and the footer with its gap.
-// capacity subtracts it from the terminal height. The chrome itself is ~11
-// rows; reserving 12 leaves a one-row safety margin so the rendered block never
-// overflows the terminal.
-const reservedRows = 12
+// blank line, the title and its blank line, the filter input/badge line, the Menu
+// box border and padding, the scroll-indicator line and its blank line, and the
+// footer with its gap. capacity subtracts it from the terminal height. The chrome
+// is ~12 rows; reserving 13 leaves a one-row safety margin. The filter line's
+// height is reserved unconditionally so the visible row count is stable whether or
+// not the filter is open.
+const reservedRows = 13
 
 // Backend is the subset of the github client the repo-list screen needs.
 type Backend interface {
@@ -209,27 +210,42 @@ func (m Model) View() string {
 		return fmt.Sprintf("\n  %s\n", styles.Truncate(msg, m.width))
 	}
 
+	boxWidth := m.width / 2
+	innerWidth := max(boxWidth-2, 1)
+
 	var s strings.Builder
 	s.WriteString(" Select a Repository:\n\n")
 
-	capacity := m.capacity()
-	end := min(m.top+capacity, len(m.filtered))
+	// Filter chrome: the live input while typing, else the committed-filter badge.
+	// One line either way; its height is always reserved (see reservedRows).
+	if m.searching {
+		s.WriteString(m.input.View())
+		s.WriteString("\n")
+	} else if badge := m.filterBadge(); badge != "" {
+		s.WriteString(styles.Title.Render(styles.TruncateEllipsis(badge, innerWidth)))
+		s.WriteString("\n")
+	}
 
-	for i := m.top; i < end; i++ {
-		cursor := "  "
-		repoName := m.repos[m.filtered[i]].FullName
-		if m.cursor == i {
-			cursor = "> "
-			repoName = styles.SelectedItem.Render(repoName)
+	if len(m.filtered) == 0 {
+		s.WriteString(styles.TruncateEllipsis(m.emptyListMessage(), innerWidth))
+	} else {
+		capacity := m.capacity()
+		end := min(m.top+capacity, len(m.filtered))
+		for i := m.top; i < end; i++ {
+			cursor := "  "
+			repoName := m.repos[m.filtered[i]].FullName
+			if m.cursor == i {
+				cursor = "> "
+				repoName = styles.SelectedItem.Render(repoName)
+			}
+			fmt.Fprintf(&s, "%s%s\n", cursor, repoName)
 		}
-		fmt.Fprintf(&s, "%s%s\n", cursor, repoName)
+		if len(m.filtered) > capacity {
+			fmt.Fprintf(&s, "\n  %s\n", scrollIndicator(m.top, end, len(m.filtered)))
+		}
 	}
 
-	if len(m.filtered) > capacity {
-		fmt.Fprintf(&s, "\n  %s\n", scrollIndicator(m.top, end, len(m.filtered)))
-	}
-
-	box := styles.Menu.Width(m.width / 2).Render(s.String())
+	box := styles.Menu.Width(boxWidth).Render(s.String())
 	centeredBox := lipgloss.PlaceHorizontal(m.width, lipgloss.Center, box)
 
 	footer := m.footer()
@@ -239,7 +255,10 @@ func (m Model) View() string {
 // footer renders the hint bar, or a refresh spinner / non-fatal refresh error
 // when one is active. The full keybinding list lives in the ? help overlay.
 func (m Model) footer() string {
-	hints := help.Footer(keys.Map.Select, keys.Map.Refresh, keys.Map.Help, keys.Map.Quit)
+	if m.searching {
+		return fmt.Sprintf(" Search: %s  •  [esc] Cancel  •  [enter] Apply  •  [↑/↓] Move", m.query)
+	}
+	hints := help.Footer(keys.Map.Search, keys.Map.Select, keys.Map.Refresh, keys.Map.Help, keys.Map.Quit)
 	switch {
 	case m.refreshing:
 		return fmt.Sprintf(" %sRefreshing...  %s", m.spinner.View(), hints)
@@ -248,6 +267,24 @@ func (m Model) footer() string {
 	default:
 		return hints
 	}
+}
+
+// filterBadge returns the committed-filter status badge, "filter: "query" (n/total)",
+// or "" when no query is active.
+func (m Model) filterBadge() string {
+	if m.query == "" {
+		return ""
+	}
+	return fmt.Sprintf("filter: %q (%d/%d)", m.query, len(m.filtered), len(m.repos))
+}
+
+// emptyListMessage explains why the visible list is empty: a no-match query, or
+// (with no query) genuinely no repositories.
+func (m Model) emptyListMessage() string {
+	if m.query != "" {
+		return fmt.Sprintf("No repositories match %q.", m.query)
+	}
+	return "No repositories found."
 }
 
 // capacity returns how many repository rows fit in the current window, always at

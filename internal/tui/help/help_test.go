@@ -31,12 +31,12 @@ func TestSectionsContextualPR(t *testing.T) {
 
 func TestSectionsRepoListOmitsPRActions(t *testing.T) {
 	got := descs(screen.ViewRepoList)
-	for _, absent := range []string{"checkout", "approve pr", "search"} {
+	for _, absent := range []string{"checkout", "approve pr"} {
 		if got[absent] {
 			t.Errorf("repo-list sections should not include %q", absent)
 		}
 	}
-	for _, want := range []string{"select", "refresh", "help", "quit"} {
+	for _, want := range []string{"search", "select", "refresh", "help", "quit"} {
 		if !got[want] {
 			t.Errorf("repo-list sections missing %q", want)
 		}
