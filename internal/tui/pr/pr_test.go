@@ -79,6 +79,29 @@ func comment(login, body string) ghClient.PRComment {
 	return c
 }
 
+// dividerLineCount returns the number of full-width horizontal rules in a
+// rendered Comments body — lines made up solely of the divider rune. Tests run
+// non-TTY, so lipgloss emits no ANSI and the rule appears as raw runes.
+func dividerLineCount(s string) int {
+	n := 0
+	for line := range strings.SplitSeq(s, "\n") {
+		if line != "" && strings.Trim(line, dividerRune) == "" {
+			n++
+		}
+	}
+	return n
+}
+
+// firstDividerLine returns the first full-width rule line in s, or "" if none.
+func firstDividerLine(s string) string {
+	for line := range strings.SplitSeq(s, "\n") {
+		if line != "" && strings.Trim(line, dividerRune) == "" {
+			return line
+		}
+	}
+	return ""
+}
+
 // withPRs builds a loaded PR screen with n synthetic pull requests.
 func withPRs(n int) Model {
 	m := New(fakeBackend{}, "octocat", "hello", 100, 40, 0)
@@ -1377,6 +1400,85 @@ func TestCommentsTabErrorState(t *testing.T) {
 	m.updateViewportContent()
 	if v := m.View(); !strings.Contains(v, "Failed to load comments") || !strings.Contains(v, "network down") {
 		t.Fatalf("Comments tab missing error state:\n%s", v)
+	}
+}
+
+func TestCommentsTabRendersDividerBetweenComments(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.activeTab = tabs.Comments
+	m.comments[1] = commentState{status: commentsLoaded, list: []ghClient.PRComment{
+		comment("alice", "first body"),
+		comment("bob", "second body"),
+		comment("carol", "third body"),
+	}}
+	out := m.renderComments(1)
+	if got := dividerLineCount(out); got != 2 {
+		t.Fatalf("divider count = %d, want 2 (one between each of 3 comments):\n%s", got, out)
+	}
+	lines := strings.Split(out, "\n")
+	if strings.Trim(lines[0], dividerRune) == "" {
+		t.Fatalf("comments must not start with a divider:\n%s", out)
+	}
+	if last := lines[len(lines)-1]; last != "" && strings.Trim(last, dividerRune) == "" {
+		t.Fatalf("comments must not end with a divider:\n%s", out)
+	}
+}
+
+func TestCommentsTabSingleCommentHasNoDivider(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.activeTab = tabs.Comments
+	m.comments[1] = commentState{status: commentsLoaded, list: []ghClient.PRComment{
+		comment("alice", "only body"),
+	}}
+	if got := dividerLineCount(m.renderComments(1)); got != 0 {
+		t.Fatalf("single comment must have no divider, got %d", got)
+	}
+}
+
+func TestCommentsTabDividerSeparatesBodies(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.activeTab = tabs.Comments
+	m.comments[1] = commentState{status: commentsLoaded, list: []ghClient.PRComment{
+		comment("alice", "first body"),
+		comment("bob", "second body"),
+	}}
+	out := m.renderComments(1)
+	first := strings.Index(out, "first body")
+	div := strings.Index(out, dividerRune+dividerRune)
+	second := strings.Index(out, "second body")
+	if first < 0 || div < 0 || second < 0 || first >= div || div >= second {
+		t.Fatalf("divider not between bodies (first=%d div=%d second=%d):\n%s", first, div, second, out)
+	}
+}
+
+func TestCommentsTabDividerSpansWidthAndAdaptsOnResize(t *testing.T) {
+	t.Parallel()
+	m := withPRs(1)
+	m.activeTab = tabs.Comments
+	m.comments[1] = commentState{status: commentsLoaded, list: []ghClient.PRComment{
+		comment("alice", "first body"),
+		comment("bob", "second body"),
+	}}
+
+	wide, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = wide.(Model)
+	wideRule := firstDividerLine(m.renderComments(1))
+	if got := strings.Count(wideRule, dividerRune); got != m.viewport.Width {
+		t.Fatalf("divider width = %d, want viewport width %d", got, m.viewport.Width)
+	}
+
+	narrow, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+	m = narrow.(Model)
+	narrowRule := firstDividerLine(m.renderComments(1))
+	if got := strings.Count(narrowRule, dividerRune); got != m.viewport.Width {
+		t.Fatalf("divider width = %d, want viewport width %d after resize", got, m.viewport.Width)
+	}
+
+	if strings.Count(wideRule, dividerRune) == strings.Count(narrowRule, dividerRune) {
+		t.Fatalf("divider did not adapt to width on resize (both %d runes)", strings.Count(wideRule, dividerRune))
 	}
 }
 

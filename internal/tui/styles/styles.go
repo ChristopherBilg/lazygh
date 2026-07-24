@@ -17,6 +17,7 @@ var (
 	Title        lipgloss.Style
 	Menu         lipgloss.Style
 	Error        lipgloss.Style
+	Divider      lipgloss.Style
 )
 
 func init() { Configure(config.Default().Theme) }
@@ -30,6 +31,7 @@ func Configure(t config.ThemeConfig) {
 	Title = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Title)).Background(lipgloss.Color(t.Accent)).Padding(0, 1).Bold(true)
 	Menu = lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(t.Accent)).Padding(1, 2)
 	Error = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Error)).Bold(true)
+	Divider = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Border))
 }
 
 // Truncate shortens s to fit within width columns (ANSI-aware) so a long message
