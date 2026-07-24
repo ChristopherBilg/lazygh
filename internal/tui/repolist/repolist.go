@@ -19,6 +19,14 @@ import (
 	"github.com/ChristopherBilg/lazygh/internal/tui/styles"
 )
 
+// reservedRows is the vertical chrome around the repository rows: the leading
+// blank line, the title and its blank line, the Menu box border and padding,
+// the scroll-indicator line and its blank line, and the footer with its gap.
+// capacity subtracts it from the terminal height. The chrome itself is ~11
+// rows; reserving 12 leaves a one-row safety margin so the rendered block never
+// overflows the terminal.
+const reservedRows = 12
+
 // Backend is the subset of the github client the repo-list screen needs.
 type Backend interface {
 	Repositories(ctx context.Context, force bool) ([]ghClient.Repository, error)
@@ -35,6 +43,7 @@ type Model struct {
 	spinner    spinner.Model
 	width      int
 	height     int
+	top        int // index of the first visible repo (scroll offset)
 }
 
 // New returns a repository-selection screen in its initial loading state,
@@ -92,6 +101,7 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.top = clampTop(m.top, m.cursor, len(m.repos), m.capacity())
 
 	case spinner.TickMsg:
 		// Ticks are not addressed, so they only reach the active screen. If the
@@ -113,6 +123,7 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		if m.cursor >= len(m.repos) {
 			m.cursor = max(len(m.repos)-1, 0)
 		}
+		m.top = clampTop(m.top, m.cursor, len(m.repos), m.capacity())
 
 	case screen.FetchErrMsg:
 		m.loading = false
@@ -124,10 +135,12 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		case key.Matches(msg, keys.Map.Up):
 			if m.cursor > 0 {
 				m.cursor--
+				m.top = clampTop(m.top, m.cursor, len(m.repos), m.capacity())
 			}
 		case key.Matches(msg, keys.Map.Down):
 			if m.cursor < len(m.repos)-1 {
 				m.cursor++
+				m.top = clampTop(m.top, m.cursor, len(m.repos), m.capacity())
 			}
 		case key.Matches(msg, keys.Map.Select):
 			if len(m.repos) > 0 {
@@ -169,14 +182,10 @@ func (m Model) View() string {
 	var s strings.Builder
 	s.WriteString(" Select a Repository:\n\n")
 
-	start := 0
-	end := len(m.repos)
-	maxVisible := m.height - 10
-	if end > maxVisible {
-		end = maxVisible
-	}
+	capacity := m.capacity()
+	end := min(m.top+capacity, len(m.repos))
 
-	for i := start; i < end; i++ {
+	for i := m.top; i < end; i++ {
 		cursor := "  "
 		repoName := m.repos[i].FullName
 		if m.cursor == i {
@@ -186,8 +195,8 @@ func (m Model) View() string {
 		fmt.Fprintf(&s, "%s%s\n", cursor, repoName)
 	}
 
-	if len(m.repos) > maxVisible {
-		fmt.Fprintf(&s, "\n  ...and %d more.\n", len(m.repos)-maxVisible)
+	if len(m.repos) > capacity {
+		fmt.Fprintf(&s, "\n  %s\n", scrollIndicator(m.top, end, len(m.repos)))
 	}
 
 	box := styles.Menu.Width(m.width / 2).Render(s.String())
@@ -209,4 +218,45 @@ func (m Model) footer() string {
 	default:
 		return hints
 	}
+}
+
+// capacity returns how many repository rows fit in the current window, always at
+// least 1 so the highlighted row and the scroll indicator stay usable even on
+// very short terminals.
+func (m Model) capacity() int {
+	return max(m.height-reservedRows, 1)
+}
+
+// clampTop returns the scroll offset (index of the first visible row) that keeps
+// cursor within the visible window [top, top+capacity) while scrolling the
+// minimum distance from the current top. It never scrolls past the end of the
+// list, so the window stays full when the list is longer than capacity.
+func clampTop(top, cursor, total, capacity int) int {
+	if capacity < 1 {
+		capacity = 1
+	}
+	switch {
+	case cursor < top:
+		top = cursor
+	case cursor >= top+capacity:
+		top = cursor - capacity + 1
+	}
+	if maxTop := max(total-capacity, 0); top > maxTop {
+		top = maxTop
+	}
+	return max(top, 0)
+}
+
+// scrollIndicator renders a compact "x–y of N" counter for the visible window
+// [top, end) over total rows, with up/down arrows shown only when there is
+// content scrolled off above or below.
+func scrollIndicator(top, end, total int) string {
+	up, down := " ", " "
+	if top > 0 {
+		up = "↑"
+	}
+	if end < total {
+		down = "↓"
+	}
+	return fmt.Sprintf("%s %d–%d of %d %s", up, top+1, end, total, down)
 }
