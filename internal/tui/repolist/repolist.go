@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/ChristopherBilg/lazygh/internal/fuzzy"
 	ghClient "github.com/ChristopherBilg/lazygh/internal/github"
 	"github.com/ChristopherBilg/lazygh/internal/tui/help"
 	"github.com/ChristopherBilg/lazygh/internal/tui/keys"
@@ -43,7 +44,9 @@ type Model struct {
 	spinner    spinner.Model
 	width      int
 	height     int
-	top        int // index of the first visible repo (scroll offset)
+	top        int    // index of the first visible repo (scroll offset)
+	query      string // applied fuzzy filter over FullName; "" = no filter
+	filtered   []int  // indices into repos, in ranked display order
 }
 
 // New returns a repository-selection screen in its initial loading state,
@@ -101,7 +104,7 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.top = clampTop(m.top, m.cursor, len(m.repos), m.capacity())
+		m.top = clampTop(m.top, m.cursor, len(m.filtered), m.capacity())
 
 	case spinner.TickMsg:
 		// Ticks are not addressed, so they only reach the active screen. If the
@@ -120,10 +123,7 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		m.loading = false
 		m.refreshing = false
 		m.fetchErr = nil
-		if m.cursor >= len(m.repos) {
-			m.cursor = max(len(m.repos)-1, 0)
-		}
-		m.top = clampTop(m.top, m.cursor, len(m.repos), m.capacity())
+		m.recompute() // re-apply the active query to the new data and clamp cursor/scroll
 
 	case screen.FetchErrMsg:
 		m.loading = false
@@ -135,16 +135,16 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		case key.Matches(msg, keys.Map.Up):
 			if m.cursor > 0 {
 				m.cursor--
-				m.top = clampTop(m.top, m.cursor, len(m.repos), m.capacity())
+				m.top = clampTop(m.top, m.cursor, len(m.filtered), m.capacity())
 			}
 		case key.Matches(msg, keys.Map.Down):
-			if m.cursor < len(m.repos)-1 {
+			if m.cursor < len(m.filtered)-1 {
 				m.cursor++
-				m.top = clampTop(m.top, m.cursor, len(m.repos), m.capacity())
+				m.top = clampTop(m.top, m.cursor, len(m.filtered), m.capacity())
 			}
 		case key.Matches(msg, keys.Map.Select):
-			if len(m.repos) > 0 {
-				selected := m.repos[m.cursor]
+			if len(m.filtered) > 0 {
+				selected := m.repos[m.filtered[m.cursor]]
 				return m, func() tea.Msg {
 					return RepoSelectedMsg{Owner: selected.Owner.Login, Name: selected.Name}
 				}
@@ -183,11 +183,11 @@ func (m Model) View() string {
 	s.WriteString(" Select a Repository:\n\n")
 
 	capacity := m.capacity()
-	end := min(m.top+capacity, len(m.repos))
+	end := min(m.top+capacity, len(m.filtered))
 
 	for i := m.top; i < end; i++ {
 		cursor := "  "
-		repoName := m.repos[i].FullName
+		repoName := m.repos[m.filtered[i]].FullName
 		if m.cursor == i {
 			cursor = "> "
 			repoName = styles.SelectedItem.Render(repoName)
@@ -195,8 +195,8 @@ func (m Model) View() string {
 		fmt.Fprintf(&s, "%s%s\n", cursor, repoName)
 	}
 
-	if len(m.repos) > capacity {
-		fmt.Fprintf(&s, "\n  %s\n", scrollIndicator(m.top, end, len(m.repos)))
+	if len(m.filtered) > capacity {
+		fmt.Fprintf(&s, "\n  %s\n", scrollIndicator(m.top, end, len(m.filtered)))
 	}
 
 	box := styles.Menu.Width(m.width / 2).Render(s.String())
@@ -225,6 +225,30 @@ func (m Model) footer() string {
 // very short terminals.
 func (m Model) capacity() int {
 	return max(m.height-reservedRows, 1)
+}
+
+// recompute rebuilds the filtered (visible) index list from the current query and
+// repo set, clamps the cursor into range, and re-clamps the scroll offset. It is
+// the single place the visible set is derived, so filtering, refresh, and cancel
+// all stay consistent. With an empty query every repo is visible in natural order;
+// otherwise repos are fuzzy-ranked by FullName (owner/name), best match first.
+func (m *Model) recompute() {
+	if m.query == "" {
+		m.filtered = make([]int, len(m.repos))
+		for i := range m.filtered {
+			m.filtered[i] = i
+		}
+	} else {
+		names := make([]string, len(m.repos))
+		for i := range m.repos {
+			names[i] = m.repos[i].FullName
+		}
+		m.filtered = fuzzy.Rank(m.query, names)
+	}
+	if m.cursor >= len(m.filtered) {
+		m.cursor = max(len(m.filtered)-1, 0)
+	}
+	m.top = clampTop(m.top, m.cursor, len(m.filtered), m.capacity())
 }
 
 // clampTop returns the scroll offset (index of the first visible row) that keeps

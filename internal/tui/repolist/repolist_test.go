@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -40,6 +41,7 @@ func loaded(n int) Model {
 		repos[i] = repo("o", fmt.Sprintf("r%d", i))
 	}
 	m.repos = repos
+	m.recompute()
 	return m
 }
 
@@ -64,6 +66,7 @@ func TestUpdateCursorNavigation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			m := Model{repos: repos, cursor: tt.startCur}
+			m.recompute()
 			updated, _ := m.Update(tt.key)
 			if got := updated.(Model).cursor; got != tt.wantCursor {
 				t.Fatalf("cursor = %d, want %d", got, tt.wantCursor)
@@ -76,6 +79,7 @@ func TestEnterEmitsRepoSelectedMsg(t *testing.T) {
 	t.Parallel()
 	repos := []ghClient.Repository{repo("octocat", "hello"), repo("octocat", "world")}
 	m := Model{repos: repos, cursor: 1}
+	m.recompute()
 
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
@@ -452,5 +456,67 @@ func TestEnterSelectsRepoBeyondFirstScreen(t *testing.T) {
 	}
 	if sel.Owner != "o" || sel.Name != "r49" {
 		t.Fatalf("selected %+v, want {Owner:o Name:r49}", sel)
+	}
+}
+
+// named builds a loaded, wide/tall repo-list screen with one repo per given
+// "owner/name" string, so fuzzy-filter ordering can be asserted without truncation.
+func named(fullNames ...string) Model {
+	m := New(fakeBackend{})
+	m.loading = false
+	m.width = 120
+	m.height = 40
+	repos := make([]ghClient.Repository, len(fullNames))
+	for i, fn := range fullNames {
+		owner, name, _ := strings.Cut(fn, "/")
+		repos[i] = repo(owner, name)
+	}
+	m.repos = repos
+	m.recompute()
+	return m
+}
+
+// visibleNames returns the FullNames currently visible, in display order.
+func visibleNames(m Model) []string {
+	out := make([]string, len(m.filtered))
+	for i, idx := range m.filtered {
+		out[i] = m.repos[idx].FullName
+	}
+	return out
+}
+
+func TestRecomputeFiltersAndRanksByFullName(t *testing.T) {
+	t.Parallel()
+	m := named("acme/alpha", "acme/beta", "other/alpha-tool")
+	m.query = "alpha"
+	m.recompute()
+	// Both alpha repos match; "acme/alpha" (contiguous "alpha" at a word boundary,
+	// earlier) outranks "other/alpha-tool"; "acme/beta" drops out.
+	if got := visibleNames(m); !slices.Equal(got, []string{"acme/alpha", "other/alpha-tool"}) {
+		t.Fatalf("visible = %v, want [acme/alpha other/alpha-tool]", got)
+	}
+}
+
+func TestRecomputeEmptyQueryShowsAllInOrder(t *testing.T) {
+	t.Parallel()
+	m := named("o/a", "o/b", "o/c")
+	m.query = ""
+	m.recompute()
+	if got := visibleNames(m); !slices.Equal(got, []string{"o/a", "o/b", "o/c"}) {
+		t.Fatalf("visible = %v, want [o/a o/b o/c] (natural order)", got)
+	}
+}
+
+func TestRecomputeClampsCursorWhenFilterShrinks(t *testing.T) {
+	t.Parallel()
+	m := named("o/a", "o/b", "o/c")
+	m.cursor = 2
+	m.query = "a" // only "o/a" contains an 'a'
+	m.recompute()
+	if len(m.filtered) != 1 {
+		t.Fatalf("filtered len = %d, want 1", len(m.filtered))
+	}
+	if m.cursor != 0 {
+		t.Fatalf("cursor = %d, want 0 (clamped into range)", m.cursor)
 	}
 }
