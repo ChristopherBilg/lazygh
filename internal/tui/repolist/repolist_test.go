@@ -23,7 +23,7 @@ func (fakeBackend) Repositories(_ context.Context, _ bool) ([]ghClient.Repositor
 }
 
 func repo(owner, name string) ghClient.Repository {
-	r := ghClient.Repository{Name: name}
+	r := ghClient.Repository{Name: name, FullName: owner + "/" + name}
 	r.Owner.Login = owner
 	return r
 }
@@ -314,5 +314,143 @@ func TestScrollIndicator(t *testing.T) {
 				t.Errorf("down arrow = %v, want %v (got %q)", down, tt.wantDown, got)
 			}
 		})
+	}
+}
+
+// downTo drives Down key presses until the cursor reaches idx, returning the
+// resulting model. It fails if the cursor cannot advance that far.
+func downTo(t *testing.T, m Model, idx int) Model {
+	t.Helper()
+	for m.cursor < idx {
+		prev := m.cursor
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m = updated.(Model)
+		if m.cursor == prev {
+			t.Fatalf("cursor stuck at %d, wanted %d", m.cursor, idx)
+		}
+	}
+	return m
+}
+
+func TestViewScrollsToKeepSelectionVisible(t *testing.T) {
+	t.Parallel()
+	m := downTo(t, loaded(50), 49) // height 24 → capacity 12
+	if m.cursor != 49 {
+		t.Fatalf("cursor = %d, want 49", m.cursor)
+	}
+	v := m.View()
+	if !strings.Contains(v, "> o/r49") {
+		t.Fatalf("expected the last repo selected and visible, got:\n%s", v)
+	}
+	if strings.Contains(v, "...and") {
+		t.Fatalf("expected the dead-end '...and N more.' line gone, got:\n%s", v)
+	}
+	if !strings.Contains(v, "of 50") {
+		t.Fatalf("expected scroll indicator 'of 50', got:\n%s", v)
+	}
+	if strings.Contains(v, "o/r0") {
+		t.Fatalf("expected the first repo scrolled off-screen, got:\n%s", v)
+	}
+}
+
+func TestViewNoIndicatorWhenListFits(t *testing.T) {
+	t.Parallel()
+	m := loaded(5) // capacity 12 > 5
+	v := m.View()
+	if strings.Contains(v, " of ") || strings.Contains(v, "...and") {
+		t.Fatalf("expected no scroll indicator when the list fits, got:\n%s", v)
+	}
+	if !strings.Contains(v, "> o/r0") || !strings.Contains(v, "o/r4") {
+		t.Fatalf("expected all repos rendered, got:\n%s", v)
+	}
+}
+
+func TestViewResizeSmallerKeepsSelectionVisible(t *testing.T) {
+	t.Parallel()
+	m := downTo(t, loaded(50), 49)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 14}) // capacity → 2
+	m = updated.(Model)
+	v := m.View()
+	if !strings.Contains(v, "> o/r49") {
+		t.Fatalf("expected selection still visible after resize, got:\n%s", v)
+	}
+}
+
+func TestReposMsgClampsTopWhenListShrinks(t *testing.T) {
+	t.Parallel()
+	m := downTo(t, loaded(50), 49) // cursor 49, top 38
+	updated, _ := m.Update(reposMsg([]ghClient.Repository{repo("o", "a"), repo("o", "b")}))
+	m = updated.(Model)
+	if m.cursor != 1 {
+		t.Fatalf("cursor = %d, want 1 after shrink to 2", m.cursor)
+	}
+	if m.top != 0 {
+		t.Fatalf("top = %d, want 0 after shrink to 2", m.top)
+	}
+	if v := m.View(); !strings.Contains(v, "> o/b") {
+		t.Fatalf("expected last remaining repo selected, got:\n%s", v)
+	}
+}
+
+func TestViewTinyHeightRendersRowAndIndicator(t *testing.T) {
+	t.Parallel()
+	m := loaded(50)
+	m.height = 13 // capacity → 1
+	m = downTo(t, m, 49)
+	v := m.View()
+	if !strings.Contains(v, "> o/r49") {
+		t.Fatalf("expected the selected row on a tiny terminal, got:\n%s", v)
+	}
+	if !strings.Contains(v, "of 50") {
+		t.Fatalf("expected the scroll indicator on a tiny terminal, got:\n%s", v)
+	}
+}
+
+func TestViewScrollUpKeepsSelectionVisible(t *testing.T) {
+	t.Parallel()
+	m := downTo(t, loaded(50), 49) // scrolled to bottom: cursor 49, top 38
+	for range 20 {                 // move the cursor back up to 29
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+		m = updated.(Model)
+	}
+	if m.cursor != 29 {
+		t.Fatalf("cursor = %d, want 29", m.cursor)
+	}
+	v := m.View()
+	if !strings.Contains(v, "> o/r29") {
+		t.Fatalf("expected selection visible after scrolling up, got:\n%s", v)
+	}
+	if strings.Contains(v, "o/r49") {
+		t.Fatalf("expected the bottom repo scrolled off after moving up, got:\n%s", v)
+	}
+}
+
+func TestViewResizeLargerShowsMoreRows(t *testing.T) {
+	t.Parallel()
+	m := downTo(t, loaded(50), 49)                                   // cursor 49, top 38 at height 24 (capacity 12)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40}) // capacity → 28
+	m = updated.(Model)
+	v := m.View()
+	if !strings.Contains(v, "> o/r49") {
+		t.Fatalf("expected selection still visible after enlarging, got:\n%s", v)
+	}
+	if !strings.Contains(v, "o/r22") {
+		t.Fatalf("expected more rows revealed above when enlarged (top row r22), got:\n%s", v)
+	}
+}
+
+func TestEnterSelectsRepoBeyondFirstScreen(t *testing.T) {
+	t.Parallel()
+	m := downTo(t, loaded(50), 49) // cursor scrolled well past the first screenful
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected a selection command for an off-screen repo")
+	}
+	sel, ok := cmd().(RepoSelectedMsg)
+	if !ok {
+		t.Fatalf("expected RepoSelectedMsg, got %T", cmd())
+	}
+	if sel.Owner != "o" || sel.Name != "r49" {
+		t.Fatalf("selected %+v, want {Owner:o Name:r49}", sel)
 	}
 }
