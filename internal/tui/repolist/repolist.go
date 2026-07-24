@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -42,6 +43,8 @@ type Model struct {
 	refreshing bool
 	fetchErr   error
 	spinner    spinner.Model
+	input      textinput.Model // the "/" filter field
+	searching  bool            // input focused / capturing keystrokes
 	width      int
 	height     int
 	top        int    // index of the first visible repo (scroll offset)
@@ -52,10 +55,16 @@ type Model struct {
 // New returns a repository-selection screen in its initial loading state,
 // backed by the given github client.
 func New(backend Backend) Model {
+	ti := textinput.New()
+	ti.Prompt = "/ "
+	ti.Placeholder = "filter repositories"
+	ti.CharLimit = 128
+
 	return Model{
 		backend: backend,
 		loading: true,
 		spinner: spinner.New(spinner.WithSpinner(spinner.Dot)),
+		input:   ti,
 	}
 }
 
@@ -131,7 +140,20 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		m.fetchErr = msg.Err
 
 	case tea.KeyMsg:
+		if m.searching {
+			return m.updateSearch(msg)
+		}
 		switch {
+		case key.Matches(msg, keys.Map.Search):
+			// Only open search when the list is on screen. View() returns early while
+			// loading or on a fatal load error, so entering capture then would route
+			// keys (e.g. the "r" retry) into an invisible input.
+			if !m.loading && (m.fetchErr == nil || len(m.repos) > 0) {
+				m.searching = true
+				m.input.SetValue(m.query) // pre-fill so "/" re-opens to refine
+				m.input.CursorEnd()
+				cmds = append(cmds, m.input.Focus())
+			}
 		case key.Matches(msg, keys.Map.Up):
 			if m.cursor > 0 {
 				m.cursor--
@@ -162,6 +184,14 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 			if !wasFetching {
 				cmds = append(cmds, m.spinner.Tick)
 			}
+		}
+
+	default:
+		// Forward any other message (e.g. the textinput's cursor-blink tick) to the
+		// filter input while it is focused, so the blink loop keeps running.
+		if m.searching {
+			m.input, cmd = m.input.Update(msg)
+			cmds = append(cmds, cmd)
 		}
 	}
 
@@ -225,6 +255,54 @@ func (m Model) footer() string {
 // very short terminals.
 func (m Model) capacity() int {
 	return max(m.height-reservedRows, 1)
+}
+
+// CapturingInput reports whether the filter field is focused. The router consults
+// it (via screen.InputCapturer) to suppress global keys and forward every key to
+// this screen while the user is typing a search. Value receiver: the router stores
+// screens as screen.Model values.
+func (m Model) CapturingInput() bool { return m.searching }
+
+// updateSearch handles keys while the filter field is focused: Enter commits (keeps
+// the filter, blurs), Esc cancels (clears the filter, restores the full list),
+// Up/Down move the selection live, and every other key is typed into the field,
+// re-filtering on each change.
+func (m Model) updateSearch(msg tea.KeyMsg) (screen.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEnter:
+		m.searching = false
+		m.input.Blur()
+		return m, nil
+	case tea.KeyEsc:
+		m.searching = false
+		m.input.Blur()
+		m.input.Reset()
+		m.query = ""
+		m.cursor = 0
+		m.recompute()
+		return m, nil
+	case tea.KeyUp:
+		if m.cursor > 0 {
+			m.cursor--
+			m.top = clampTop(m.top, m.cursor, len(m.filtered), m.capacity())
+		}
+		return m, nil
+	case tea.KeyDown:
+		if m.cursor < len(m.filtered)-1 {
+			m.cursor++
+			m.top = clampTop(m.top, m.cursor, len(m.filtered), m.capacity())
+		}
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	if m.input.Value() != m.query {
+		m.query = m.input.Value()
+		m.cursor = 0 // best match to the top on each query change
+		m.recompute()
+	}
+	return m, cmd
 }
 
 // recompute rebuilds the filtered (visible) index list from the current query and

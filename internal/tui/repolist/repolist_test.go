@@ -520,3 +520,175 @@ func TestRecomputeClampsCursorWhenFilterShrinks(t *testing.T) {
 		t.Fatalf("cursor = %d, want 0 (clamped into range)", m.cursor)
 	}
 }
+
+// enterSearch presses "/" and returns the resulting model.
+func enterSearch(t *testing.T, m Model) Model {
+	t.Helper()
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	return updated.(Model)
+}
+
+// typeRunes feeds each rune of s to the model as a key press.
+func typeRunes(m Model, s string) Model {
+	for _, r := range s {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	return m
+}
+
+func TestSlashEntersSearch(t *testing.T) {
+	t.Parallel()
+	m := enterSearch(t, named("o/cache", "o/docs"))
+	if !m.searching {
+		t.Fatal("expected searching=true after '/'")
+	}
+	if !m.CapturingInput() {
+		t.Fatal("expected CapturingInput()=true while searching")
+	}
+}
+
+func TestSlashIgnoredWhileLoading(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{}) // loading == true, no repos
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	if updated.(Model).searching {
+		t.Fatal("'/' must not start search while the loading screen is shown")
+	}
+}
+
+func TestSlashIgnoredOnFatalErrorScreen(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{})
+	fe, _ := m.Update(screen.FetchErrMsg{View: screen.ViewRepoList, Err: errors.New("boom")})
+	m = fe.(Model) // fatal error screen: loading cleared, fetchErr set, no repos
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	if updated.(Model).searching {
+		t.Fatal("'/' must not start search on the fatal error screen (retry key would be swallowed)")
+	}
+}
+
+func TestTypingFiltersList(t *testing.T) {
+	t.Parallel()
+	m := typeRunes(enterSearch(t, named("acme/cache-race", "o/dark-mode", "o/cache-refactor")), "cache")
+	if m.query != "cache" {
+		t.Fatalf("query = %q, want cache", m.query)
+	}
+	if len(m.filtered) != 2 {
+		t.Fatalf("filtered len = %d, want 2", len(m.filtered))
+	}
+}
+
+func TestArrowsNavigateAndLettersTypeWhileSearching(t *testing.T) {
+	t.Parallel()
+	m := typeRunes(enterSearch(t, named("o/cat", "o/car", "o/cab")), "a") // all match; cursor 0
+	if len(m.filtered) != 3 {
+		t.Fatalf("filtered len = %d, want 3", len(m.filtered))
+	}
+	dn, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = dn.(Model)
+	if m.cursor != 1 {
+		t.Fatalf("cursor = %d, want 1 after Down while typing", m.cursor)
+	}
+	jm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	if got := jm.(Model).query; got != "aj" {
+		t.Fatalf("query = %q, want \"aj\" (j must be typed, not navigate)", got)
+	}
+}
+
+func TestUpArrowNavigatesWhileSearching(t *testing.T) {
+	t.Parallel()
+	m := typeRunes(enterSearch(t, named("o/cat", "o/car", "o/cab")), "a")
+	dn, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = dn.(Model)
+	if m.cursor != 1 {
+		t.Fatalf("cursor = %d, want 1 after Down", m.cursor)
+	}
+	up, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if got := up.(Model).cursor; got != 0 {
+		t.Fatalf("cursor = %d, want 0 after Up", got)
+	}
+}
+
+func TestEnterCommitsFilter(t *testing.T) {
+	t.Parallel()
+	m := typeRunes(enterSearch(t, named("o/cache", "o/docs")), "cache")
+	ent, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = ent.(Model)
+	if m.searching {
+		t.Fatal("expected searching=false after Enter")
+	}
+	if m.query != "cache" || len(m.filtered) != 1 {
+		t.Fatalf("query=%q filtered=%d, want cache/1 retained", m.query, len(m.filtered))
+	}
+	if m.CapturingInput() {
+		t.Fatal("expected CapturingInput()=false after commit")
+	}
+}
+
+func TestEscCancelsFilter(t *testing.T) {
+	t.Parallel()
+	m := typeRunes(enterSearch(t, named("o/cache", "o/docs")), "cache")
+	esc, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = esc.(Model)
+	if m.searching {
+		t.Fatal("expected searching=false after Esc")
+	}
+	if m.query != "" || len(m.filtered) != 2 {
+		t.Fatalf("query=%q filtered=%d, want empty/2 (full list restored)", m.query, len(m.filtered))
+	}
+}
+
+func TestSelectedRepoUsesFilteredIndex(t *testing.T) {
+	t.Parallel()
+	m := typeRunes(enterSearch(t, named("o/docs", "o/cache-refactor", "o/tests")), "cache")
+	ent, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // commit, then select
+	m = ent.(Model)
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected a selection command on the filtered selection")
+	}
+	sel, ok := cmd().(RepoSelectedMsg)
+	if !ok {
+		t.Fatalf("expected RepoSelectedMsg, got %T", cmd())
+	}
+	if sel.Name != "cache-refactor" {
+		t.Fatalf("selected %q, want cache-refactor", sel.Name)
+	}
+}
+
+func TestCursorStaysValidAsFilterShrinks(t *testing.T) {
+	t.Parallel()
+	m := typeRunes(enterSearch(t, named("o/cab", "o/cad", "o/cae")), "ca")
+	m.cursor = 2
+	m = typeRunes(m, "b") // query "cab" → only "o/cab" matches
+	if len(m.filtered) != 1 {
+		t.Fatalf("filtered len = %d, want 1", len(m.filtered))
+	}
+	if m.cursor != 0 {
+		t.Fatalf("cursor = %d, want 0 (reset to top on query change)", m.cursor)
+	}
+}
+
+func TestRefreshPreservesFilter(t *testing.T) {
+	t.Parallel()
+	m := typeRunes(enterSearch(t, named("o/cache", "o/docs", "o/cache2")), "cache")
+	ent, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = ent.(Model)
+	updated, _ := m.Update(reposMsg([]ghClient.Repository{repo("o", "cache-warmup"), repo("o", "unrelated")}))
+	m = updated.(Model)
+	if m.query != "cache" || len(m.filtered) != 1 {
+		t.Fatalf("query=%q filtered=%d, want cache/1 preserved across refresh", m.query, len(m.filtered))
+	}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if sel, ok := cmd().(RepoSelectedMsg); !ok || sel.Name != "cache-warmup" {
+		t.Fatalf("selected=%+v, want cache-warmup", sel)
+	}
+}
+
+func TestCapturingInputFalseWhenIdle(t *testing.T) {
+	t.Parallel()
+	if loaded(2).CapturingInput() {
+		t.Fatal("expected CapturingInput()=false when not searching")
+	}
+}
