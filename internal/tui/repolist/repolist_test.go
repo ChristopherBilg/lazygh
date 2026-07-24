@@ -10,6 +10,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	ghClient "github.com/ChristopherBilg/lazygh/internal/github"
 	"github.com/ChristopherBilg/lazygh/internal/tui/screen"
@@ -338,7 +339,7 @@ func downTo(t *testing.T, m Model, idx int) Model {
 
 func TestViewScrollsToKeepSelectionVisible(t *testing.T) {
 	t.Parallel()
-	m := downTo(t, loaded(50), 49) // height 24 → capacity 12
+	m := downTo(t, loaded(50), 49) // height 24 → capacity 11
 	if m.cursor != 49 {
 		t.Fatalf("cursor = %d, want 49", m.cursor)
 	}
@@ -382,7 +383,7 @@ func TestViewResizeSmallerKeepsSelectionVisible(t *testing.T) {
 
 func TestReposMsgClampsTopWhenListShrinks(t *testing.T) {
 	t.Parallel()
-	m := downTo(t, loaded(50), 49) // cursor 49, top 38
+	m := downTo(t, loaded(50), 49) // cursor 49, top 39
 	updated, _ := m.Update(reposMsg([]ghClient.Repository{repo("o", "a"), repo("o", "b")}))
 	m = updated.(Model)
 	if m.cursor != 1 {
@@ -412,7 +413,7 @@ func TestViewTinyHeightRendersRowAndIndicator(t *testing.T) {
 
 func TestViewScrollUpKeepsSelectionVisible(t *testing.T) {
 	t.Parallel()
-	m := downTo(t, loaded(50), 49) // scrolled to bottom: cursor 49, top 38
+	m := downTo(t, loaded(50), 49) // scrolled to bottom: cursor 49, top 39
 	for range 20 {                 // move the cursor back up to 29
 		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
 		m = updated.(Model)
@@ -431,7 +432,7 @@ func TestViewScrollUpKeepsSelectionVisible(t *testing.T) {
 
 func TestViewResizeLargerShowsMoreRows(t *testing.T) {
 	t.Parallel()
-	m := downTo(t, loaded(50), 49)                                   // cursor 49, top 38 at height 24 (capacity 11)
+	m := downTo(t, loaded(50), 49)                                   // cursor 49, top 39 at height 24 (capacity 11)
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40}) // capacity → 27
 	m = updated.(Model)
 	v := m.View()
@@ -766,5 +767,25 @@ func TestSearchingScrollWindowKeepsSelectionVisible(t *testing.T) {
 	}
 	if !strings.Contains(v, "of 50") {
 		t.Fatalf("expected scroll indicator 'of 50', got:\n%s", v)
+	}
+}
+
+func TestViewEmptyRepoListShowsMessage(t *testing.T) {
+	t.Parallel()
+	if v := loaded(0).View(); !strings.Contains(v, "No repositories found.") {
+		t.Fatalf("expected empty-list message, got:\n%s", v)
+	}
+}
+
+func TestSearchingLongQueryDoesNotWrap(t *testing.T) {
+	t.Parallel()
+	mk := func(query string) int {
+		m := loaded(3)
+		ws, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+		m = typeRunes(enterSearch(t, ws.(Model)), query)
+		return lipgloss.Height(m.View())
+	}
+	if long, short := mk(strings.Repeat("z", 60)), mk("z"); long != short {
+		t.Fatalf("View height: long-query=%d short-query=%d; filter chrome must not wrap", long, short)
 	}
 }

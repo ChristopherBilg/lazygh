@@ -115,6 +115,10 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.top = clampTop(m.top, m.cursor, len(m.filtered), m.capacity())
+		// The filter input sits inside the Menu box; size it to the inner width
+		// (minus Menu+Title padding and the "/ " prompt) so a long query scrolls
+		// within the box instead of wrapping onto a second line.
+		m.input.Width = max(m.width/2-8, 1)
 
 	case spinner.TickMsg:
 		// Ticks are not addressed, so they only reach the active screen. If the
@@ -211,7 +215,7 @@ func (m Model) View() string {
 	}
 
 	boxWidth := m.width / 2
-	innerWidth := max(boxWidth-2, 1)
+	innerWidth := max(boxWidth-6, 1)
 
 	var s strings.Builder
 	s.WriteString(" Select a Repository:\n\n")
