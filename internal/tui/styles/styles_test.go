@@ -78,6 +78,7 @@ func TestConfigureAppliesTheme(t *testing.T) {
 		{"Title fg", Title.GetForeground(), lipgloss.Color("4")},
 		{"Title bg", Title.GetBackground(), lipgloss.Color("1")},
 		{"Error fg", Error.GetForeground(), lipgloss.Color("5")},
+		{"Divider fg", Divider.GetForeground(), lipgloss.Color("2")},
 	}
 	for _, tc := range cases {
 		if tc.got != tc.want {
