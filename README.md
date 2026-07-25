@@ -13,6 +13,7 @@
 ## Features
 
 - ✅ **Repository picker** — jump into any of your most recently pushed repositories
+- ✅ **Fuzzy repository search** (`/`) — filter the repository picker by name as you type
 - ✅ **Pull-request browsing** — a split-pane list + detail view of a repo's open PRs
 - ✅ **Tabbed PR detail** — switch the right pane between Description, Files Changed, and Comments with `[`/`]`
 - ✅ **Syntax-highlighted diff viewer** — the Files Changed tab renders the PR's diff (via `gh pr diff`) with per-language syntax highlighting and `+`/`-` gutters, scrollable like the rest of the detail pane
@@ -90,6 +91,7 @@ These are the defaults; every action can be remapped via configuration (see belo
 | Key | Action |
 |---|---|
 | `↑`/`k`, `↓`/`j` | Move the selection |
+| `/` | Fuzzy-filter the list by repository name (`esc` cancels, `enter` keeps the filter) |
 | `enter` | Open the selected repository |
 | `r` | Refresh the repository list |
 

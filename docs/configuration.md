@@ -59,7 +59,7 @@ their defaults. All keys are optional.
 | `approve` | `a` | PR view (submit an approving review) |
 | `merge` | `M` | PR view (merge the selected PR; asks to confirm) |
 | `close` | `D` | PR view (close the selected PR; asks to confirm) |
-| `search` | `/` | PR view (fuzzy-filter titles) |
+| `search` | `/` | repo list (fuzzy-filter names), PR view (fuzzy-filter titles) |
 | `filter_mine` | `m` | PR view (show only your PRs) |
 | `filter_review` | `v` | PR view (show only PRs needing your review) |
 | `filter_dependabot` | `d` | PR view (show only Dependabot PRs) |

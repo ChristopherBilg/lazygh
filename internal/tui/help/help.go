@@ -39,7 +39,7 @@ func Sections(view screen.ViewID) []Section {
 	default: // screen.ViewRepoList
 		return []Section{
 			{"Navigate", []key.Binding{m.Up, m.Down}},
-			{"Actions", []key.Binding{m.Select, m.Refresh}},
+			{"Actions", []key.Binding{m.Search, m.Select, m.Refresh}},
 			{"General", []key.Binding{m.Help, m.Quit}},
 		}
 	}

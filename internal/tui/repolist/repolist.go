@@ -9,9 +9,11 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/ChristopherBilg/lazygh/internal/fuzzy"
 	ghClient "github.com/ChristopherBilg/lazygh/internal/github"
 	"github.com/ChristopherBilg/lazygh/internal/tui/help"
 	"github.com/ChristopherBilg/lazygh/internal/tui/keys"
@@ -20,12 +22,13 @@ import (
 )
 
 // reservedRows is the vertical chrome around the repository rows: the leading
-// blank line, the title and its blank line, the Menu box border and padding,
-// the scroll-indicator line and its blank line, and the footer with its gap.
-// capacity subtracts it from the terminal height. The chrome itself is ~11
-// rows; reserving 12 leaves a one-row safety margin so the rendered block never
-// overflows the terminal.
-const reservedRows = 12
+// blank line, the title and its blank line, the filter input/badge line, the Menu
+// box border and padding, the scroll-indicator line and its blank line, and the
+// footer with its gap. capacity subtracts it from the terminal height. The chrome
+// is ~12 rows; reserving 13 leaves a one-row safety margin. The filter line's
+// height is reserved unconditionally so the visible row count is stable whether or
+// not the filter is open.
+const reservedRows = 13
 
 // Backend is the subset of the github client the repo-list screen needs.
 type Backend interface {
@@ -41,18 +44,35 @@ type Model struct {
 	refreshing bool
 	fetchErr   error
 	spinner    spinner.Model
+	input      textinput.Model // the "/" filter field
+	searching  bool            // input focused / capturing keystrokes
 	width      int
 	height     int
-	top        int // index of the first visible repo (scroll offset)
+	top        int    // index of the first visible repo (scroll offset)
+	query      string // applied fuzzy filter over FullName; "" = no filter
+	filtered   []int  // indices into repos, in ranked display order
 }
+
+// var _ screen.InputCapturer = Model{} asserts, at compile time, that Model
+// satisfies InputCapturer with a value receiver. The router stores screens as
+// screen.Model values, so if CapturingInput ever became a pointer-receiver
+// method, this line would fail to compile instead of silently breaking the
+// suppression of global keys while searching.
+var _ screen.InputCapturer = Model{}
 
 // New returns a repository-selection screen in its initial loading state,
 // backed by the given github client.
 func New(backend Backend) Model {
+	ti := textinput.New()
+	ti.Prompt = "/ "
+	ti.Placeholder = "filter repositories"
+	ti.CharLimit = 128
+
 	return Model{
 		backend: backend,
 		loading: true,
 		spinner: spinner.New(spinner.WithSpinner(spinner.Dot)),
+		input:   ti,
 	}
 }
 
@@ -101,7 +121,11 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.top = clampTop(m.top, m.cursor, len(m.repos), m.capacity())
+		m.top = clampTop(m.top, m.cursor, len(m.filtered), m.capacity())
+		// The filter input sits inside the Menu box; size it to the inner width
+		// (minus Menu+Title padding and the "/ " prompt) so a long query scrolls
+		// within the box instead of wrapping onto a second line.
+		m.input.Width = max(m.width/2-8, 1)
 
 	case spinner.TickMsg:
 		// Ticks are not addressed, so they only reach the active screen. If the
@@ -120,10 +144,7 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		m.loading = false
 		m.refreshing = false
 		m.fetchErr = nil
-		if m.cursor >= len(m.repos) {
-			m.cursor = max(len(m.repos)-1, 0)
-		}
-		m.top = clampTop(m.top, m.cursor, len(m.repos), m.capacity())
+		m.recompute() // re-apply the active query to the new data and clamp cursor/scroll
 
 	case screen.FetchErrMsg:
 		m.loading = false
@@ -131,20 +152,33 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 		m.fetchErr = msg.Err
 
 	case tea.KeyMsg:
+		if m.searching {
+			return m.updateSearch(msg)
+		}
 		switch {
+		case key.Matches(msg, keys.Map.Search):
+			// Only open search when the list is on screen. View() returns early while
+			// loading or on a fatal load error, so entering capture then would route
+			// keys (e.g. the "r" retry) into an invisible input.
+			if !m.loading && (m.fetchErr == nil || len(m.repos) > 0) {
+				m.searching = true
+				m.input.SetValue(m.query) // pre-fill so "/" re-opens to refine
+				m.input.CursorEnd()
+				cmds = append(cmds, m.input.Focus())
+			}
 		case key.Matches(msg, keys.Map.Up):
 			if m.cursor > 0 {
 				m.cursor--
-				m.top = clampTop(m.top, m.cursor, len(m.repos), m.capacity())
+				m.top = clampTop(m.top, m.cursor, len(m.filtered), m.capacity())
 			}
 		case key.Matches(msg, keys.Map.Down):
-			if m.cursor < len(m.repos)-1 {
+			if m.cursor < len(m.filtered)-1 {
 				m.cursor++
-				m.top = clampTop(m.top, m.cursor, len(m.repos), m.capacity())
+				m.top = clampTop(m.top, m.cursor, len(m.filtered), m.capacity())
 			}
 		case key.Matches(msg, keys.Map.Select):
-			if len(m.repos) > 0 {
-				selected := m.repos[m.cursor]
+			if len(m.filtered) > 0 {
+				selected := m.repos[m.filtered[m.cursor]]
 				return m, func() tea.Msg {
 					return RepoSelectedMsg{Owner: selected.Owner.Login, Name: selected.Name}
 				}
@@ -163,6 +197,14 @@ func (m Model) Update(msg tea.Msg) (screen.Model, tea.Cmd) {
 				cmds = append(cmds, m.spinner.Tick)
 			}
 		}
+
+	default:
+		// Forward any other message (e.g. the textinput's cursor-blink tick) to the
+		// filter input while it is focused, so the blink loop keeps running.
+		if m.searching {
+			m.input, cmd = m.input.Update(msg)
+			cmds = append(cmds, cmd)
+		}
 	}
 
 	return m, tea.Batch(cmds...)
@@ -179,27 +221,42 @@ func (m Model) View() string {
 		return fmt.Sprintf("\n  %s\n", styles.Truncate(msg, m.width))
 	}
 
+	boxWidth := m.width / 2
+	innerWidth := max(boxWidth-6, 1)
+
 	var s strings.Builder
 	s.WriteString(" Select a Repository:\n\n")
 
-	capacity := m.capacity()
-	end := min(m.top+capacity, len(m.repos))
+	// Filter chrome: the live input while typing, else the committed-filter badge.
+	// One line either way; its height is always reserved (see reservedRows).
+	if m.searching {
+		s.WriteString(m.input.View())
+		s.WriteString("\n")
+	} else if badge := m.filterBadge(); badge != "" {
+		s.WriteString(styles.Title.Render(styles.TruncateEllipsis(badge, innerWidth)))
+		s.WriteString("\n")
+	}
 
-	for i := m.top; i < end; i++ {
-		cursor := "  "
-		repoName := m.repos[i].FullName
-		if m.cursor == i {
-			cursor = "> "
-			repoName = styles.SelectedItem.Render(repoName)
+	if len(m.filtered) == 0 {
+		s.WriteString(styles.TruncateEllipsis(m.emptyListMessage(), innerWidth))
+	} else {
+		capacity := m.capacity()
+		end := min(m.top+capacity, len(m.filtered))
+		for i := m.top; i < end; i++ {
+			cursor := "  "
+			repoName := m.repos[m.filtered[i]].FullName
+			if m.cursor == i {
+				cursor = "> "
+				repoName = styles.SelectedItem.Render(repoName)
+			}
+			fmt.Fprintf(&s, "%s%s\n", cursor, repoName)
 		}
-		fmt.Fprintf(&s, "%s%s\n", cursor, repoName)
+		if len(m.filtered) > capacity {
+			fmt.Fprintf(&s, "\n  %s\n", scrollIndicator(m.top, end, len(m.filtered)))
+		}
 	}
 
-	if len(m.repos) > capacity {
-		fmt.Fprintf(&s, "\n  %s\n", scrollIndicator(m.top, end, len(m.repos)))
-	}
-
-	box := styles.Menu.Width(m.width / 2).Render(s.String())
+	box := styles.Menu.Width(boxWidth).Render(s.String())
 	centeredBox := lipgloss.PlaceHorizontal(m.width, lipgloss.Center, box)
 
 	footer := m.footer()
@@ -209,7 +266,10 @@ func (m Model) View() string {
 // footer renders the hint bar, or a refresh spinner / non-fatal refresh error
 // when one is active. The full keybinding list lives in the ? help overlay.
 func (m Model) footer() string {
-	hints := help.Footer(keys.Map.Select, keys.Map.Refresh, keys.Map.Help, keys.Map.Quit)
+	if m.searching {
+		return styles.Truncate(fmt.Sprintf(" Search: %s  •  [esc] Cancel  •  [enter] Apply  •  [↑/↓] Move", m.query), m.width)
+	}
+	hints := help.Footer(keys.Map.Search, keys.Map.Select, keys.Map.Refresh, keys.Map.Help, keys.Map.Quit)
 	switch {
 	case m.refreshing:
 		return fmt.Sprintf(" %sRefreshing...  %s", m.spinner.View(), hints)
@@ -220,11 +280,101 @@ func (m Model) footer() string {
 	}
 }
 
+// filterBadge returns the committed-filter status badge, "filter: "query" (n/total)",
+// or "" when no query is active.
+func (m Model) filterBadge() string {
+	if m.query == "" {
+		return ""
+	}
+	return fmt.Sprintf("filter: %q (%d/%d)", m.query, len(m.filtered), len(m.repos))
+}
+
+// emptyListMessage explains why the visible list is empty: a no-match query, or
+// (with no query) genuinely no repositories.
+func (m Model) emptyListMessage() string {
+	if m.query != "" {
+		return fmt.Sprintf("No repositories match %q.", m.query)
+	}
+	return "No repositories found."
+}
+
 // capacity returns how many repository rows fit in the current window, always at
 // least 1 so the highlighted row and the scroll indicator stay usable even on
 // very short terminals.
 func (m Model) capacity() int {
 	return max(m.height-reservedRows, 1)
+}
+
+// CapturingInput reports whether the filter field is focused. The router consults
+// it (via screen.InputCapturer) to suppress global keys and forward every key to
+// this screen while the user is typing a search. Value receiver: the router stores
+// screens as screen.Model values.
+func (m Model) CapturingInput() bool { return m.searching }
+
+// updateSearch handles keys while the filter field is focused: Enter commits (keeps
+// the filter, blurs), Esc cancels (clears the filter, restores the full list),
+// Up/Down move the selection live, and every other key is typed into the field,
+// re-filtering on each change.
+func (m Model) updateSearch(msg tea.KeyMsg) (screen.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEnter:
+		m.searching = false
+		m.input.Blur()
+		return m, nil
+	case tea.KeyEsc:
+		m.searching = false
+		m.input.Blur()
+		m.input.Reset()
+		m.query = ""
+		m.cursor = 0
+		m.recompute()
+		return m, nil
+	case tea.KeyUp:
+		if m.cursor > 0 {
+			m.cursor--
+			m.top = clampTop(m.top, m.cursor, len(m.filtered), m.capacity())
+		}
+		return m, nil
+	case tea.KeyDown:
+		if m.cursor < len(m.filtered)-1 {
+			m.cursor++
+			m.top = clampTop(m.top, m.cursor, len(m.filtered), m.capacity())
+		}
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	if m.input.Value() != m.query {
+		m.query = m.input.Value()
+		m.cursor = 0 // best match to the top on each query change
+		m.recompute()
+	}
+	return m, cmd
+}
+
+// recompute rebuilds the filtered (visible) index list from the current query and
+// repo set, clamps the cursor into range, and re-clamps the scroll offset. It is
+// the single place the visible set is derived, so filtering, refresh, and cancel
+// all stay consistent. With an empty query every repo is visible in natural order;
+// otherwise repos are fuzzy-ranked by FullName (owner/name), best match first.
+func (m *Model) recompute() {
+	if m.query == "" {
+		m.filtered = make([]int, len(m.repos))
+		for i := range m.filtered {
+			m.filtered[i] = i
+		}
+	} else {
+		names := make([]string, len(m.repos))
+		for i := range m.repos {
+			names[i] = m.repos[i].FullName
+		}
+		m.filtered = fuzzy.Rank(m.query, names)
+	}
+	if m.cursor >= len(m.filtered) {
+		m.cursor = max(len(m.filtered)-1, 0)
+	}
+	m.top = clampTop(m.top, m.cursor, len(m.filtered), m.capacity())
 }
 
 // clampTop returns the scroll offset (index of the first visible row) that keeps

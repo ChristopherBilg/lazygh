@@ -2248,3 +2248,14 @@ func TestStatusMsgTargetView(t *testing.T) {
 		t.Fatal("statusMsg must target the PR view")
 	}
 }
+
+func TestSearchingFooterTruncatedToWidth(t *testing.T) {
+	t.Parallel()
+	m := withTitledPRs("a", "b")
+	m.width = 80
+	m.searching = true
+	m.query = strings.Repeat("z", 100)
+	if w := lipgloss.Width(m.footer()); w > m.width {
+		t.Fatalf("footer width = %d, want <= %d (long search query must be truncated)", w, m.width)
+	}
+}

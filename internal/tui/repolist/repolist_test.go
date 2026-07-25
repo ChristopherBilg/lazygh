@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	ghClient "github.com/ChristopherBilg/lazygh/internal/github"
 	"github.com/ChristopherBilg/lazygh/internal/tui/screen"
@@ -40,6 +42,7 @@ func loaded(n int) Model {
 		repos[i] = repo("o", fmt.Sprintf("r%d", i))
 	}
 	m.repos = repos
+	m.recompute()
 	return m
 }
 
@@ -64,6 +67,7 @@ func TestUpdateCursorNavigation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			m := Model{repos: repos, cursor: tt.startCur}
+			m.recompute()
 			updated, _ := m.Update(tt.key)
 			if got := updated.(Model).cursor; got != tt.wantCursor {
 				t.Fatalf("cursor = %d, want %d", got, tt.wantCursor)
@@ -76,6 +80,7 @@ func TestEnterEmitsRepoSelectedMsg(t *testing.T) {
 	t.Parallel()
 	repos := []ghClient.Repository{repo("octocat", "hello"), repo("octocat", "world")}
 	m := Model{repos: repos, cursor: 1}
+	m.recompute()
 
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
@@ -279,7 +284,7 @@ func TestClampTop(t *testing.T) {
 func TestCapacityClampsToAtLeastOne(t *testing.T) {
 	t.Parallel()
 	tests := []struct{ height, want int }{
-		{24, 12}, {13, 1}, {12, 1}, {0, 1}, {100, 88},
+		{24, 11}, {13, 1}, {12, 1}, {0, 1}, {100, 87},
 	}
 	for _, tt := range tests {
 		if got := (Model{height: tt.height}).capacity(); got != tt.want {
@@ -334,7 +339,7 @@ func downTo(t *testing.T, m Model, idx int) Model {
 
 func TestViewScrollsToKeepSelectionVisible(t *testing.T) {
 	t.Parallel()
-	m := downTo(t, loaded(50), 49) // height 24 → capacity 12
+	m := downTo(t, loaded(50), 49) // height 24 → capacity 11
 	if m.cursor != 49 {
 		t.Fatalf("cursor = %d, want 49", m.cursor)
 	}
@@ -355,7 +360,7 @@ func TestViewScrollsToKeepSelectionVisible(t *testing.T) {
 
 func TestViewNoIndicatorWhenListFits(t *testing.T) {
 	t.Parallel()
-	m := loaded(5) // capacity 12 > 5
+	m := loaded(5) // capacity 11 > 5
 	v := m.View()
 	if strings.Contains(v, " of ") || strings.Contains(v, "...and") {
 		t.Fatalf("expected no scroll indicator when the list fits, got:\n%s", v)
@@ -378,7 +383,7 @@ func TestViewResizeSmallerKeepsSelectionVisible(t *testing.T) {
 
 func TestReposMsgClampsTopWhenListShrinks(t *testing.T) {
 	t.Parallel()
-	m := downTo(t, loaded(50), 49) // cursor 49, top 38
+	m := downTo(t, loaded(50), 49) // cursor 49, top 39
 	updated, _ := m.Update(reposMsg([]ghClient.Repository{repo("o", "a"), repo("o", "b")}))
 	m = updated.(Model)
 	if m.cursor != 1 {
@@ -408,7 +413,7 @@ func TestViewTinyHeightRendersRowAndIndicator(t *testing.T) {
 
 func TestViewScrollUpKeepsSelectionVisible(t *testing.T) {
 	t.Parallel()
-	m := downTo(t, loaded(50), 49) // scrolled to bottom: cursor 49, top 38
+	m := downTo(t, loaded(50), 49) // scrolled to bottom: cursor 49, top 39
 	for range 20 {                 // move the cursor back up to 29
 		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
 		m = updated.(Model)
@@ -427,15 +432,15 @@ func TestViewScrollUpKeepsSelectionVisible(t *testing.T) {
 
 func TestViewResizeLargerShowsMoreRows(t *testing.T) {
 	t.Parallel()
-	m := downTo(t, loaded(50), 49)                                   // cursor 49, top 38 at height 24 (capacity 12)
-	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40}) // capacity → 28
+	m := downTo(t, loaded(50), 49)                                   // cursor 49, top 39 at height 24 (capacity 11)
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40}) // capacity → 27
 	m = updated.(Model)
 	v := m.View()
 	if !strings.Contains(v, "> o/r49") {
 		t.Fatalf("expected selection still visible after enlarging, got:\n%s", v)
 	}
-	if !strings.Contains(v, "o/r22") {
-		t.Fatalf("expected more rows revealed above when enlarged (top row r22), got:\n%s", v)
+	if !strings.Contains(v, "o/r23") {
+		t.Fatalf("expected more rows revealed above when enlarged (top row r23), got:\n%s", v)
 	}
 }
 
@@ -452,5 +457,346 @@ func TestEnterSelectsRepoBeyondFirstScreen(t *testing.T) {
 	}
 	if sel.Owner != "o" || sel.Name != "r49" {
 		t.Fatalf("selected %+v, want {Owner:o Name:r49}", sel)
+	}
+}
+
+// named builds a loaded, wide/tall repo-list screen with one repo per given
+// "owner/name" string, so fuzzy-filter ordering can be asserted without truncation.
+func named(fullNames ...string) Model {
+	m := New(fakeBackend{})
+	m.loading = false
+	m.width = 120
+	m.height = 40
+	repos := make([]ghClient.Repository, len(fullNames))
+	for i, fn := range fullNames {
+		owner, name, _ := strings.Cut(fn, "/")
+		repos[i] = repo(owner, name)
+	}
+	m.repos = repos
+	m.recompute()
+	return m
+}
+
+// visibleNames returns the FullNames currently visible, in display order.
+func visibleNames(m Model) []string {
+	out := make([]string, len(m.filtered))
+	for i, idx := range m.filtered {
+		out[i] = m.repos[idx].FullName
+	}
+	return out
+}
+
+func TestRecomputeFiltersAndRanksByFullName(t *testing.T) {
+	t.Parallel()
+	m := named("acme/alpha", "acme/beta", "other/alpha-tool")
+	m.query = "alpha"
+	m.recompute()
+	// Both alpha repos match; "acme/alpha" (contiguous "alpha" at a word boundary,
+	// earlier) outranks "other/alpha-tool"; "acme/beta" drops out.
+	if got := visibleNames(m); !slices.Equal(got, []string{"acme/alpha", "other/alpha-tool"}) {
+		t.Fatalf("visible = %v, want [acme/alpha other/alpha-tool]", got)
+	}
+}
+
+func TestRecomputeEmptyQueryShowsAllInOrder(t *testing.T) {
+	t.Parallel()
+	m := named("o/a", "o/b", "o/c")
+	m.query = ""
+	m.recompute()
+	if got := visibleNames(m); !slices.Equal(got, []string{"o/a", "o/b", "o/c"}) {
+		t.Fatalf("visible = %v, want [o/a o/b o/c] (natural order)", got)
+	}
+}
+
+func TestRecomputeClampsCursorWhenFilterShrinks(t *testing.T) {
+	t.Parallel()
+	m := named("o/a", "o/b", "o/c")
+	m.cursor = 2
+	m.query = "a" // only "o/a" contains an 'a'
+	m.recompute()
+	if len(m.filtered) != 1 {
+		t.Fatalf("filtered len = %d, want 1", len(m.filtered))
+	}
+	if m.cursor != 0 {
+		t.Fatalf("cursor = %d, want 0 (clamped into range)", m.cursor)
+	}
+}
+
+// enterSearch presses "/" and returns the resulting model.
+func enterSearch(t *testing.T, m Model) Model {
+	t.Helper()
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	return updated.(Model)
+}
+
+// typeRunes feeds each rune of s to the model as a key press.
+func typeRunes(m Model, s string) Model {
+	for _, r := range s {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(Model)
+	}
+	return m
+}
+
+func TestSlashEntersSearch(t *testing.T) {
+	t.Parallel()
+	m := enterSearch(t, named("o/cache", "o/docs"))
+	if !m.searching {
+		t.Fatal("expected searching=true after '/'")
+	}
+	if !m.CapturingInput() {
+		t.Fatal("expected CapturingInput()=true while searching")
+	}
+}
+
+func TestSlashIgnoredWhileLoading(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{}) // loading == true, no repos
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	if updated.(Model).searching {
+		t.Fatal("'/' must not start search while the loading screen is shown")
+	}
+}
+
+func TestSlashIgnoredOnFatalErrorScreen(t *testing.T) {
+	t.Parallel()
+	m := New(fakeBackend{})
+	fe, _ := m.Update(screen.FetchErrMsg{View: screen.ViewRepoList, Err: errors.New("boom")})
+	m = fe.(Model) // fatal error screen: loading cleared, fetchErr set, no repos
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	if updated.(Model).searching {
+		t.Fatal("'/' must not start search on the fatal error screen (retry key would be swallowed)")
+	}
+}
+
+func TestTypingFiltersList(t *testing.T) {
+	t.Parallel()
+	m := typeRunes(enterSearch(t, named("acme/cache-race", "o/dark-mode", "o/cache-refactor")), "cache")
+	if m.query != "cache" {
+		t.Fatalf("query = %q, want cache", m.query)
+	}
+	if len(m.filtered) != 2 {
+		t.Fatalf("filtered len = %d, want 2", len(m.filtered))
+	}
+}
+
+func TestArrowsNavigateAndLettersTypeWhileSearching(t *testing.T) {
+	t.Parallel()
+	m := typeRunes(enterSearch(t, named("o/cat", "o/car", "o/cab")), "a") // all match; cursor 0
+	if len(m.filtered) != 3 {
+		t.Fatalf("filtered len = %d, want 3", len(m.filtered))
+	}
+	dn, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = dn.(Model)
+	if m.cursor != 1 {
+		t.Fatalf("cursor = %d, want 1 after Down while typing", m.cursor)
+	}
+	jm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	if got := jm.(Model).query; got != "aj" {
+		t.Fatalf("query = %q, want \"aj\" (j must be typed, not navigate)", got)
+	}
+}
+
+func TestUpArrowNavigatesWhileSearching(t *testing.T) {
+	t.Parallel()
+	m := typeRunes(enterSearch(t, named("o/cat", "o/car", "o/cab")), "a")
+	dn, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = dn.(Model)
+	if m.cursor != 1 {
+		t.Fatalf("cursor = %d, want 1 after Down", m.cursor)
+	}
+	up, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if got := up.(Model).cursor; got != 0 {
+		t.Fatalf("cursor = %d, want 0 after Up", got)
+	}
+}
+
+func TestEnterCommitsFilter(t *testing.T) {
+	t.Parallel()
+	m := typeRunes(enterSearch(t, named("o/cache", "o/docs")), "cache")
+	ent, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = ent.(Model)
+	if m.searching {
+		t.Fatal("expected searching=false after Enter")
+	}
+	if m.query != "cache" || len(m.filtered) != 1 {
+		t.Fatalf("query=%q filtered=%d, want cache/1 retained", m.query, len(m.filtered))
+	}
+	if m.CapturingInput() {
+		t.Fatal("expected CapturingInput()=false after commit")
+	}
+}
+
+func TestEscCancelsFilter(t *testing.T) {
+	t.Parallel()
+	m := typeRunes(enterSearch(t, named("o/cache", "o/docs")), "cache")
+	esc, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = esc.(Model)
+	if m.searching {
+		t.Fatal("expected searching=false after Esc")
+	}
+	if m.query != "" || len(m.filtered) != 2 {
+		t.Fatalf("query=%q filtered=%d, want empty/2 (full list restored)", m.query, len(m.filtered))
+	}
+}
+
+func TestSelectedRepoUsesFilteredIndex(t *testing.T) {
+	t.Parallel()
+	m := typeRunes(enterSearch(t, named("o/docs", "o/cache-refactor", "o/tests")), "cache")
+	ent, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // commit, then select
+	m = ent.(Model)
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected a selection command on the filtered selection")
+	}
+	sel, ok := cmd().(RepoSelectedMsg)
+	if !ok {
+		t.Fatalf("expected RepoSelectedMsg, got %T", cmd())
+	}
+	if sel.Name != "cache-refactor" {
+		t.Fatalf("selected %q, want cache-refactor", sel.Name)
+	}
+}
+
+func TestCursorStaysValidAsFilterShrinks(t *testing.T) {
+	t.Parallel()
+	m := typeRunes(enterSearch(t, named("o/cab", "o/cad", "o/cae")), "ca")
+	m.cursor = 2
+	m = typeRunes(m, "b") // query "cab" → only "o/cab" matches
+	if len(m.filtered) != 1 {
+		t.Fatalf("filtered len = %d, want 1", len(m.filtered))
+	}
+	if m.cursor != 0 {
+		t.Fatalf("cursor = %d, want 0 (reset to top on query change)", m.cursor)
+	}
+}
+
+func TestRefreshPreservesFilter(t *testing.T) {
+	t.Parallel()
+	m := typeRunes(enterSearch(t, named("o/cache", "o/docs", "o/cache2")), "cache")
+	ent, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = ent.(Model)
+	updated, _ := m.Update(reposMsg([]ghClient.Repository{repo("o", "cache-warmup"), repo("o", "unrelated")}))
+	m = updated.(Model)
+	if m.query != "cache" || len(m.filtered) != 1 {
+		t.Fatalf("query=%q filtered=%d, want cache/1 preserved across refresh", m.query, len(m.filtered))
+	}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if sel, ok := cmd().(RepoSelectedMsg); !ok || sel.Name != "cache-warmup" {
+		t.Fatalf("selected=%+v, want cache-warmup", sel)
+	}
+}
+
+func TestCapturingInputFalseWhenIdle(t *testing.T) {
+	t.Parallel()
+	if loaded(2).CapturingInput() {
+		t.Fatal("expected CapturingInput()=false when not searching")
+	}
+}
+
+func TestViewSearchingShowsQueryAndHints(t *testing.T) {
+	t.Parallel()
+	m := typeRunes(enterSearch(t, named("o/cache", "o/docs")), "cache")
+	v := m.View()
+	if !strings.Contains(v, "cache") {
+		t.Fatalf("expected the typed query in the view:\n%s", v)
+	}
+	if !strings.Contains(v, "Cancel") || !strings.Contains(v, "Apply") {
+		t.Fatalf("expected search footer hints while typing:\n%s", v)
+	}
+}
+
+func TestViewCommittedShowsFilterBadge(t *testing.T) {
+	t.Parallel()
+	m := typeRunes(enterSearch(t, named("o/cache", "o/docs")), "cache")
+	ent, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	v := ent.(Model).View()
+	if !strings.Contains(v, `filter: "cache"`) {
+		t.Fatalf("expected filter badge, got:\n%s", v)
+	}
+	if !strings.Contains(v, "(1/2)") {
+		t.Fatalf("expected filter count (1/2), got:\n%s", v)
+	}
+}
+
+func TestViewNoResultsMessage(t *testing.T) {
+	t.Parallel()
+	m := typeRunes(enterSearch(t, named("o/cache", "o/docs")), "zzzzz")
+	if v := m.View(); !strings.Contains(v, "No repositories match") {
+		t.Fatalf("expected a no-results message, got:\n%s", v)
+	}
+}
+
+func TestViewCommittedZeroMatchesShowsBadgeAndNoResults(t *testing.T) {
+	t.Parallel()
+	m := typeRunes(enterSearch(t, named("o/cache", "o/docs")), "zzz")
+	ent, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	v := ent.(Model).View()
+	if !strings.Contains(v, `filter: "zzz" (0/2)`) {
+		t.Fatalf("expected badge with 0/2, got:\n%s", v)
+	}
+	if !strings.Contains(v, "No repositories match") {
+		t.Fatalf("expected no-results message with badge, got:\n%s", v)
+	}
+}
+
+func TestViewFooterHasSearchHint(t *testing.T) {
+	t.Parallel()
+	if v := named("o/cache", "o/docs").View(); !strings.Contains(v, "[/] search") {
+		t.Fatalf("expected [/] search hint in footer, got:\n%s", v)
+	}
+}
+
+func TestSearchingScrollWindowKeepsSelectionVisible(t *testing.T) {
+	t.Parallel()
+	// height 24 → capacity 11 with the filter line reserved. Navigating to the last
+	// repo while searching must keep it visible and scroll the first off-screen.
+	m := downTo(t, enterSearch(t, loaded(50)), 49)
+	if m.cursor != 49 {
+		t.Fatalf("cursor = %d, want 49", m.cursor)
+	}
+	v := m.View()
+	if !strings.Contains(v, "> o/r49") {
+		t.Fatalf("expected the last repo selected and visible while searching, got:\n%s", v)
+	}
+	if !strings.Contains(v, "Cancel") {
+		t.Fatalf("expected the search footer (still searching) in the view, got:\n%s", v)
+	}
+	if strings.Contains(v, "o/r0") {
+		t.Fatalf("expected the first repo scrolled off-screen, got:\n%s", v)
+	}
+	if !strings.Contains(v, "of 50") {
+		t.Fatalf("expected scroll indicator 'of 50', got:\n%s", v)
+	}
+}
+
+func TestViewEmptyRepoListShowsMessage(t *testing.T) {
+	t.Parallel()
+	if v := loaded(0).View(); !strings.Contains(v, "No repositories found.") {
+		t.Fatalf("expected empty-list message, got:\n%s", v)
+	}
+}
+
+func TestSearchingLongQueryDoesNotWrap(t *testing.T) {
+	t.Parallel()
+	mk := func(query string) int {
+		m := loaded(3)
+		ws, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+		m = typeRunes(enterSearch(t, ws.(Model)), query)
+		return lipgloss.Height(m.View())
+	}
+	if long, short := mk(strings.Repeat("z", 60)), mk("z"); long != short {
+		t.Fatalf("View height: long-query=%d short-query=%d; filter chrome must not wrap", long, short)
+	}
+}
+
+func TestSearchingFooterTruncatedToWidth(t *testing.T) {
+	t.Parallel()
+	m := loaded(2)
+	m.width = 80
+	m.searching = true
+	m.query = strings.Repeat("z", 100)
+	if w := lipgloss.Width(m.footer()); w > m.width {
+		t.Fatalf("footer width = %d, want <= %d (long search query must be truncated)", w, m.width)
 	}
 }
