@@ -267,7 +267,7 @@ func (m Model) View() string {
 // when one is active. The full keybinding list lives in the ? help overlay.
 func (m Model) footer() string {
 	if m.searching {
-		return fmt.Sprintf(" Search: %s  •  [esc] Cancel  •  [enter] Apply  •  [↑/↓] Move", m.query)
+		return styles.Truncate(fmt.Sprintf(" Search: %s  •  [esc] Cancel  •  [enter] Apply  •  [↑/↓] Move", m.query), m.width)
 	}
 	hints := help.Footer(keys.Map.Search, keys.Map.Select, keys.Map.Refresh, keys.Map.Help, keys.Map.Quit)
 	switch {

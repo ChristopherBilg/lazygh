@@ -1146,7 +1146,7 @@ func (m Model) footer() string {
 		return fmt.Sprintf(" %s PR #%d?  •  [y] Yes  •  [n/esc] No", verb, m.confirmPR)
 	}
 	if m.searching {
-		return fmt.Sprintf(" Search: %s  •  [esc] Cancel  •  [enter] Apply  •  [↑/↓] Move", m.query)
+		return styles.Truncate(fmt.Sprintf(" Search: %s  •  [esc] Cancel  •  [enter] Apply  •  [↑/↓] Move", m.query), m.width)
 	}
 	footerText := help.Footer(keys.Map.Search, keys.Map.Checkout, keys.Map.Help, keys.Map.Quit)
 	if status := m.statusLine(); status != "" {
