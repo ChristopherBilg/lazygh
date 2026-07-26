@@ -86,6 +86,37 @@ func TestRenderStripsControlBytes(t *testing.T) {
 	}
 }
 
+func TestRenderStripsEntityDecodedControls(t *testing.T) {
+	// Numeric character references decode to control bytes DURING rendering,
+	// after sanitize() runs on the source (&#27;/&#x1b; -> ESC, &#7;/&#x7; -> BEL).
+	// The rendered output must not carry raw control bytes to the terminal in ANY
+	// markdown context — especially inside a code span, where glamour emits a
+	// contiguous run and a fully-formed OSC 52 sequence would otherwise survive.
+	cases := []struct{ name, in string }{
+		{"decimal-paragraph", "&#27;]52;c;ZXZpbA==&#7;visible"},
+		{"decimal-codespan", "`&#27;]52;c;ZXZpbA==&#7;visible`"},
+		{"hex-codespan", "`&#x1b;]52;c;ZXZpbA==&#x7;visible`"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out := Render(c.in, 80)
+			residual := sgrSequence.ReplaceAllString(out, "")
+			if strings.ContainsRune(residual, '\x1b') {
+				t.Errorf("stray ESC leaked past the SGR filter: %q", out)
+			}
+			if strings.ContainsRune(residual, '\x07') {
+				t.Errorf("BEL leaked into rendered output: %q", out)
+			}
+			if strings.Contains(out, "\x1b]") {
+				t.Errorf("OSC introducer leaked into rendered output: %q", out)
+			}
+			if !strings.Contains(ansi.Strip(out), "visible") {
+				t.Errorf("visible text lost: %q", ansi.Strip(out))
+			}
+		})
+	}
+}
+
 func TestRenderReflowsWithWidth(t *testing.T) {
 	body := "This is a reasonably long paragraph of prose that must wrap differently " +
 		"at a narrow width than it does at a wide width so we can prove reflow works."

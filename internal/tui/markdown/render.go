@@ -8,6 +8,7 @@ package markdown
 
 import (
 	"log/slog"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -170,7 +171,33 @@ func Render(md string, width int) (out string) {
 		slog.Warn("markdown: render failed; showing raw", "err", err)
 		return clean
 	}
-	return strings.Trim(rendered, "\n")
+	return strings.Trim(stripNonSGRControls(rendered), "\n")
+}
+
+// sgrSequence matches a CSI SGR sequence (ESC '[' params 'm') — the only escape
+// glamour legitimately emits for static, fixed-profile rendering. Params are
+// restricted to digits and ';'.
+var sgrSequence = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+// stripNonSGRControls removes control bytes from glamour's rendered output while
+// preserving its SGR color/style sequences verbatim. goldmark decodes numeric
+// character references (e.g. &#27; -> ESC, &#7; -> BEL) into rendered text AFTER
+// sanitize() has run on the source, so without this an untrusted PR body could
+// inject terminal escape sequences (OSC 52 clipboard writes, cursor moves, etc.)
+// into the viewer's terminal. SGR sequences are kept; every other C0 control byte
+// (including a stray ESC that does not form an SGR) and DEL is dropped, keeping
+// only newline and tab (via the existing sanitize).
+func stripNonSGRControls(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	last := 0
+	for _, loc := range sgrSequence.FindAllStringIndex(s, -1) {
+		b.WriteString(sanitize(s[last:loc[0]]))
+		b.WriteString(s[loc[0]:loc[1]])
+		last = loc[1]
+	}
+	b.WriteString(sanitize(s[last:]))
+	return b.String()
 }
 
 // sanitize strips C0 control bytes (and DEL) from untrusted Markdown, keeping
