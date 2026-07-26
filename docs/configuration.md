@@ -105,11 +105,17 @@ defaults.
 | `selected` | `212` | highlighted (selected) list row |
 | `title` | `230` | title text (on the `accent` background) |
 | `error` | `196` | error text |
+| `markdown_style` | `dark` | glamour style for the rendered PR description body |
 
 `accent` intentionally drives three styles at once (the single "primary" color).
 A color is either a **hex** string (`"#7D56F4"`, `"#abc"`) or an **ANSI-256
 index** (`"0"`–`"255"`). **Hex must be quoted** — an unquoted `#` starts a YAML
 comment.
+
+`markdown_style` is **not** a color: it is a glamour style name — one of `dark`,
+`light`, `dracula`, `pink`, `ascii`, `notty`, or `tokyo-night` (unknown names fall
+back to `dark`). There is no terminal light/dark auto-detection; pick `light` on a
+light terminal.
 
 ```yaml
 theme:
