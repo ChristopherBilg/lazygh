@@ -114,17 +114,30 @@ func Configure(styleName string) {
 }
 
 // Render renders md as styled terminal text wrapped to width. It never returns
-// an error: on a renderer-build error, a render error, or a panic (glamour/chroma
-// can panic on pathological input) it logs and returns the sanitized raw text.
-// A width below 1, or Markdown nested deeper than maxContainerNesting (see its
-// doc comment for why), skips glamour and returns the sanitized raw text.
+// an error: on a renderer-build error, a render error, or a panic — from the
+// container-depth parse below, from building the glamour renderer, or from
+// glamour/chroma's render itself, any of which can panic on pathological input —
+// it logs and returns the sanitized raw text. A width below 1, or Markdown
+// nested deeper than maxContainerNesting (see its doc comment for why), skips
+// glamour and returns the sanitized raw text.
 //
-// mu is held across the whole call, including r.Render: the UI is
+// mu is held across the whole locked section, including r.Render: the UI is
 // single-threaded in prod, and holding the lock for the full call keeps this
 // race-free under go test -race without needing glamour's *TermRenderer to be
 // safe for concurrent use.
 func Render(md string, width int) (out string) {
 	clean := sanitize(md)
+	// Registered first so it covers everything below — the goldmark parse in
+	// maxContainerDepth as well as glamour's build/render. On any panic, fall
+	// back to the sanitized raw text. On the locked path it runs after
+	// mu.Unlock (LIFO), so the lock is always released first.
+	defer func() {
+		if rec := recover(); rec != nil {
+			slog.Warn("markdown: render panicked; showing raw", "err", rec)
+			out = clean
+		}
+	}()
+
 	if width < 1 {
 		return clean
 	}
@@ -135,13 +148,6 @@ func Render(md string, width int) (out string) {
 
 	mu.Lock()
 	defer mu.Unlock()
-
-	defer func() {
-		if rec := recover(); rec != nil {
-			slog.Warn("markdown: render panicked; showing raw", "err", rec)
-			out = clean
-		}
-	}()
 
 	key := cacheKey{style: style, width: width}
 	r, ok := cache[key]
