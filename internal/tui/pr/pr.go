@@ -19,6 +19,7 @@ import (
 	ghClient "github.com/ChristopherBilg/lazygh/internal/github"
 	"github.com/ChristopherBilg/lazygh/internal/tui/help"
 	"github.com/ChristopherBilg/lazygh/internal/tui/keys"
+	"github.com/ChristopherBilg/lazygh/internal/tui/markdown"
 	"github.com/ChristopherBilg/lazygh/internal/tui/nav"
 	"github.com/ChristopherBilg/lazygh/internal/tui/pr/diff"
 	"github.com/ChristopherBilg/lazygh/internal/tui/pr/tabs"
@@ -927,19 +928,23 @@ func (m *Model) updateViewportContent() {
 	case tabs.Comments:
 		body = m.renderComments(activePR.Number)
 	default: // tabs.Description
-		body = descriptionContent(activePR)
+		body = descriptionContent(activePR, m.viewport.Width)
 	}
 
 	m.viewport.SetContent(contentStyle.Render(body))
 }
 
-// descriptionContent renders the Description tab: the PR title, state, and body.
-func descriptionContent(pr ghClient.PullRequest) string {
+// descriptionContent renders the Description tab: the PR title and state header
+// (styled), followed by the PR body rendered as Markdown wrapped to width. An
+// empty body shows a rendered placeholder. Rendering is fail-safe: markdown.Render
+// falls back to raw text on any error, so this never breaks the TUI.
+func descriptionContent(pr ghClient.PullRequest, width int) string {
 	body := pr.Body
 	if body == "" {
 		body = "*No description provided.*"
 	}
-	return fmt.Sprintf("%s\nState: %s\n\n%s", styles.Title.Render(pr.Title), pr.State, body)
+	rendered := markdown.Render(body, width)
+	return fmt.Sprintf("%s\nState: %s\n\n%s", styles.Title.Render(pr.Title), pr.State, rendered)
 }
 
 // dividerRune is the box-drawing character repeated to form the full-width

@@ -12,6 +12,7 @@ import (
 	"github.com/ChristopherBilg/lazygh/internal/logging"
 	"github.com/ChristopherBilg/lazygh/internal/tui"
 	"github.com/ChristopherBilg/lazygh/internal/tui/keys"
+	"github.com/ChristopherBilg/lazygh/internal/tui/markdown"
 	"github.com/ChristopherBilg/lazygh/internal/tui/styles"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -42,6 +43,7 @@ func run() int {
 		MergeMethod:       cfg.GitHub.MergeMethod,
 	})
 	styles.Configure(cfg.Theme)
+	markdown.Configure(cfg.Theme.MarkdownStyle)
 	keys.Configure(cfg.Keys)
 
 	slog.Info("lazygh starting")
