@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ChristopherBilg/lazygh/internal/config"
 	ghClient "github.com/ChristopherBilg/lazygh/internal/github"
@@ -323,8 +324,12 @@ func TestPRDataMsgClampsCursorWhenListShrinks(t *testing.T) {
 func TestPRDataMsgResetsScrollOnRefresh(t *testing.T) {
 	t.Parallel()
 	m := withPRs(1)
-	// A tall body so the viewport can actually scroll.
-	m.ctx.PRs[0].Body = strings.Repeat("line\n", 200)
+	// A tall body so the viewport can actually scroll. A Markdown list is used
+	// rather than plain repeated lines: the Description tab now renders the body as
+	// Markdown, which collapses consecutive plain lines into a single word-wrapped
+	// paragraph, but keeps each list item on its own line regardless of width.
+	tall := strings.Repeat("- line\n", 200)
+	m.ctx.PRs[0].Body = tall
 	m.updateViewportContent()
 	m.viewport.ScrollDown(50)
 	if m.viewport.AtTop() {
@@ -333,7 +338,7 @@ func TestPRDataMsgResetsScrollOnRefresh(t *testing.T) {
 	ctx := ghClient.RepoContext{
 		Owner: "octocat",
 		Name:  "hello",
-		PRs:   []ghClient.PullRequest{{Number: 1, Title: "T", State: "open", Body: strings.Repeat("line\n", 200)}},
+		PRs:   []ghClient.PullRequest{{Number: 1, Title: "T", State: "open", Body: tall}},
 	}
 	updated, _ := m.Update(prDataMsg{ctx: ctx})
 	if !updated.(Model).viewport.AtTop() {
@@ -1073,7 +1078,10 @@ func TestCurrentUserMsgSkipsRecomputeWhenFilterNotUserDependent(t *testing.T) {
 	t.Parallel()
 	m := withPRs(1)
 	m.filter = filterAll
-	m.ctx.PRs[0].Body = strings.Repeat("line\n", 200) // tall body so it can scroll
+	// A Markdown list renders one line per item regardless of width, unlike plain
+	// repeated lines, which the Description tab's Markdown rendering collapses into
+	// a single word-wrapped paragraph.
+	m.ctx.PRs[0].Body = strings.Repeat("- line\n", 200) // tall body so it can scroll
 	m.updateViewportContent()
 	m.viewport.ScrollDown(50)
 	if m.viewport.AtTop() {
@@ -1324,7 +1332,10 @@ func TestFilterAndSearchEmptyStateUnresolvedLogin(t *testing.T) {
 
 func TestListPaneKeysDoNotScrollDetailViewport(t *testing.T) {
 	t.Parallel()
-	tall := strings.Repeat("line\n", 300)
+	// A Markdown list renders one line per item regardless of width, unlike plain
+	// repeated lines, which the Description tab's Markdown rendering collapses into
+	// a single word-wrapped paragraph.
+	tall := strings.Repeat("- line\n", 300)
 	// Keys the bubbles viewport binds to downward scrolling (d=half-page, j=line,
 	// f=page). In the LIST pane these must NOT scroll the detail viewport. PR #1 is
 	// authored by dependabot[bot] (and stays first/selected under the cursor) so
@@ -1348,8 +1359,64 @@ func TestDescriptionTabShowsBody(t *testing.T) {
 	m := withPRs(1)
 	m.ctx.PRs[0].Body = "the body text"
 	m.updateViewportContent()
-	if v := m.View(); !strings.Contains(v, "the body text") {
+	if v := ansi.Strip(m.View()); !strings.Contains(v, "the body text") {
 		t.Fatalf("Description tab missing body:\n%s", v)
+	}
+}
+
+// maxLine returns the widest line's display width in s (ANSI-strip first).
+func maxLine(s string) int {
+	w := 0
+	for line := range strings.SplitSeq(s, "\n") {
+		if n := ansi.StringWidth(line); n > w {
+			w = n
+		}
+	}
+	return w
+}
+
+func TestDescriptionContentRendersMarkdown(t *testing.T) {
+	t.Parallel()
+	pr := ghClient.PullRequest{Title: "My PR", State: "open", Body: "# Overview\n\n- alpha\n- beta\n"}
+	out := descriptionContent(pr, 80)
+	stripped := ansi.Strip(out)
+	if !strings.Contains(stripped, "My PR") || !strings.Contains(stripped, "State: open") {
+		t.Fatalf("missing title/state header:\n%s", stripped)
+	}
+	for _, want := range []string{"Overview", "alpha", "beta"} {
+		if !strings.Contains(stripped, want) {
+			t.Fatalf("rendered body missing %q:\n%s", want, stripped)
+		}
+	}
+	if strings.Contains(stripped, "# Overview") {
+		t.Fatalf("markdown heading not rendered (raw '#' present):\n%s", stripped)
+	}
+	if !strings.Contains(out, "\x1b[") {
+		t.Fatalf("expected ANSI escapes from markdown rendering:\n%q", out)
+	}
+}
+
+func TestDescriptionContentReflowsOnWidth(t *testing.T) {
+	t.Parallel()
+	body := "This is a long paragraph of description prose that should wrap to more lines " +
+		"at a narrow pane width than at a wide one, demonstrating reflow on resize."
+	pr := ghClient.PullRequest{Title: "T", State: "open", Body: body}
+	wide := maxLine(ansi.Strip(descriptionContent(pr, 100)))
+	narrow := maxLine(ansi.Strip(descriptionContent(pr, 40)))
+	if narrow >= wide {
+		t.Fatalf("expected narrower wrapping at width 40 (%d) than 100 (%d)", narrow, wide)
+	}
+}
+
+func TestDescriptionTabEmptyStateRenders(t *testing.T) {
+	t.Parallel()
+	pr := ghClient.PullRequest{Title: "Empty PR", State: "open", Body: ""}
+	stripped := ansi.Strip(descriptionContent(pr, 80))
+	if !strings.Contains(stripped, "No description provided") {
+		t.Fatalf("empty-description placeholder missing:\n%s", stripped)
+	}
+	if !strings.Contains(stripped, "Empty PR") {
+		t.Fatalf("title header missing on empty description:\n%s", stripped)
 	}
 }
 
@@ -1592,7 +1659,10 @@ func TestCancelSearchFetchesComments(t *testing.T) {
 
 func TestDetailPaneStillScrollsWhenFocused(t *testing.T) {
 	t.Parallel()
-	tall := strings.Repeat("line\n", 300)
+	// A Markdown list renders one line per item regardless of width, unlike plain
+	// repeated lines, which the Description tab's Markdown rendering collapses into
+	// a single word-wrapped paragraph.
+	tall := strings.Repeat("- line\n", 300)
 	// Authored by dependabot[bot] so toggling the Dependabot filter (also bound to
 	// 'd') keeps this PR visible instead of emptying the viewport, letting the
 	// scroll this test checks for actually be observable.

@@ -349,7 +349,7 @@ func TestLoadScalarAndListKeys(t *testing.T) {
 func TestLoadAppliesTheme(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
-	writeConfig(t, dir, "theme:\n  accent: \"205\"\n  selected: \"#ff8800\"\n")
+	writeConfig(t, dir, "theme:\n  accent: \"205\"\n  selected: \"#ff8800\"\n  markdown_style: light\n")
 
 	got := Load()
 	if got.Theme.Accent != "205" {
@@ -357,6 +357,9 @@ func TestLoadAppliesTheme(t *testing.T) {
 	}
 	if got.Theme.Selected != "#ff8800" {
 		t.Errorf("Selected = %q, want #ff8800", got.Theme.Selected)
+	}
+	if got.Theme.MarkdownStyle != "light" {
+		t.Errorf("MarkdownStyle = %q, want light", got.Theme.MarkdownStyle)
 	}
 	if got.Theme.Border != Default().Theme.Border {
 		t.Errorf("Border = %q, want default (untouched)", got.Theme.Border)
@@ -639,5 +642,29 @@ func TestApplyHelpOverride(t *testing.T) {
 func TestTemplateIncludesHelp(t *testing.T) {
 	if !strings.Contains(defaultConfigTemplate, `# help: ["?"]`) {
 		t.Fatalf("default config template missing the commented help key:\n%s", defaultConfigTemplate)
+	}
+}
+
+func TestDefaultMarkdownStyleIsDark(t *testing.T) {
+	if got := Default().Theme.MarkdownStyle; got != "dark" {
+		t.Fatalf("default markdown_style = %q, want \"dark\"", got)
+	}
+}
+
+func TestMarkdownStyleOverride(t *testing.T) {
+	cfg := Default()
+	ms := "light"
+	applyTheme(&cfg, &rawTheme{MarkdownStyle: &ms})
+	if got := cfg.Theme.MarkdownStyle; got != "light" {
+		t.Fatalf("markdown_style override = %q, want \"light\"", got)
+	}
+}
+
+func TestMarkdownStyleEmptyKeepsDefault(t *testing.T) {
+	cfg := Default()
+	blank := "   "
+	applyTheme(&cfg, &rawTheme{MarkdownStyle: &blank})
+	if got := cfg.Theme.MarkdownStyle; got != "dark" {
+		t.Fatalf("blank markdown_style = %q, want default \"dark\"", got)
 	}
 }

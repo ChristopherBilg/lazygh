@@ -64,11 +64,12 @@ type KeysConfig struct {
 
 // ThemeConfig holds the resolved, validated color per semantic role.
 type ThemeConfig struct {
-	Accent   string
-	Border   string
-	Selected string
-	Title    string
-	Error    string
+	Accent        string
+	Border        string
+	Selected      string
+	Title         string
+	Error         string
+	MarkdownStyle string
 }
 
 // Default returns the documented defaults. They match the values previously
@@ -106,11 +107,12 @@ func Default() Config {
 			NextTab:          []string{"]"},
 		},
 		Theme: ThemeConfig{
-			Accent:   "62",
-			Border:   "240",
-			Selected: "212",
-			Title:    "230",
-			Error:    "196",
+			Accent:        "62",
+			Border:        "240",
+			Selected:      "212",
+			Title:         "230",
+			Error:         "196",
+			MarkdownStyle: "dark",
 		},
 	}
 }
@@ -169,11 +171,12 @@ type rawKeys struct {
 }
 
 type rawTheme struct {
-	Accent   *string `yaml:"accent"`
-	Border   *string `yaml:"border"`
-	Selected *string `yaml:"selected"`
-	Title    *string `yaml:"title"`
-	Error    *string `yaml:"error"`
+	Accent        *string `yaml:"accent"`
+	Border        *string `yaml:"border"`
+	Selected      *string `yaml:"selected"`
+	Title         *string `yaml:"title"`
+	Error         *string `yaml:"error"`
+	MarkdownStyle *string `yaml:"markdown_style"`
 }
 
 // raw mirrors the on-disk YAML. Unknown keys are ignored (no strict decoding)
@@ -283,6 +286,7 @@ theme:
   # selected: "212"          # highlighted list row
   # title: "230"             # title text
   # error: "196"             # error text
+  # markdown_style: dark     # PR description Markdown style: dark, light, dracula, pink, ascii, notty, tokyo-night
 `
 
 // writeDefaultConfig writes defaultConfigTemplate to path, creating the parent
@@ -418,6 +422,14 @@ func applyTheme(cfg *Config, rt *rawTheme) {
 		} else {
 			slog.Warn("config: theme."+role.name+" is not a valid color; using default",
 				"value", *role.raw, "default", *role.dst)
+		}
+	}
+	if rt.MarkdownStyle != nil {
+		if s := strings.TrimSpace(*rt.MarkdownStyle); s != "" {
+			cfg.Theme.MarkdownStyle = s
+		} else {
+			slog.Warn("config: theme.markdown_style is empty; using default",
+				"value", *rt.MarkdownStyle, "default", cfg.Theme.MarkdownStyle)
 		}
 	}
 }
